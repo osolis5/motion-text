@@ -14,8 +14,8 @@ const REF_SIZE = 400;
 
 // --- Tweakable Parameters (bound to UI) ---
 const params = {
-  // Render mode
-  renderMode: 'solid', // 'solid' | 'flow'
+  // Render mode — blob is the new default, matches p5aholic reference
+  renderMode: 'blob', // 'solid' | 'flow' | 'blob'
 
   // Typography
   text: 'MOTION',
@@ -34,6 +34,18 @@ const params = {
   sampleDensity: 0.35,
   vertexNoiseAmount: 10,
   vertexNoiseScale: 0.012,
+
+  // Blob — tiled text pattern
+  pattern: 'ADDICT NOISE ',
+  tileSize: 0.09,         // font size as fraction of poster height
+  tileLineH: 0.98,        // line height multiplier (of font size)
+  tileRowOffset: 0,       // 0 = aligned rows, 1 = each row offset by pattern width / n
+
+  // Blob — 3D object
+  blobSize: 0.8,
+  blobRotSpeed: 0.5,
+  blobCycleInterval: 4,   // seconds between geometry swaps
+  blobIridescence: 0.7,
 
   // Color — UV palette
   hueBase: 265,
@@ -70,6 +82,13 @@ let pointsCache = new Map(); // key: `${char}|${sampleDensity}` -> { subpaths, b
 // e.g. file:// protocol blocking local font fetches — never blocks the
 // rest of the sketch. Solid mode works without Ball Pill.
 
+// --- Blob mode Three.js state ---
+let threeReady = false;
+let threeRenderer, threeScene, threeCamera, blobMesh, blobMaterial;
+let blobGeometries = [];
+let blobGeoIndex = 0;
+let blobLastSwap = 0;
+
 // ===================
 // P5.js Lifecycle
 // ===================
@@ -103,11 +122,18 @@ function setup() {
 
   // Fill poster with void
   pg.background(5, 2, 8);
+
+  // Three.js scene for Blob mode
+  initThree();
 }
 
 function draw() {
-  // Editor background
-  background(7, 6, 14);
+  // Editor background — darker for solid/flow, lighter for blob
+  if (params.renderMode === 'blob') {
+    background(18, 18, 22);
+  } else {
+    background(7, 6, 14);
+  }
 
   if (params.animate) {
     time += deltaTime * 0.001;
@@ -118,9 +144,18 @@ function draw() {
   // Draw poster centered in preview area
   image(pg, displayX, displayY, displayW, displayH);
 
-  // Thin UV border around poster
+  // Render 3D blob over the poster display area (blob mode only)
+  if (params.renderMode === 'blob' && threeReady) {
+    renderBlob();
+  }
+
+  // Thin border around poster — adapt to mode
   noFill();
-  stroke(168, 85, 247, 25);
+  if (params.renderMode === 'blob') {
+    stroke(0, 0, 0, 40);
+  } else {
+    stroke(168, 85, 247, 25);
+  }
   strokeWeight(1);
   rect(displayX - 1, displayY - 1, displayW + 2, displayH + 2);
 }
@@ -157,7 +192,15 @@ function calculateDisplay() {
 // ===================
 
 function renderPoster(g) {
-  // Trail: semi-transparent void overlay
+  // Blob mode: light-themed tiled text background, Three.js blob rendered
+  // separately on an overlay canvas positioned over the display area.
+  if (params.renderMode === 'blob') {
+    renderTiledText(g);
+    updateBlob();
+    return;
+  }
+
+  // Trail: semi-transparent void overlay (solid/flow modes)
   g.noStroke();
   g.fill(5, 2, 12, params.trailOpacity);
   g.rect(0, 0, g.width, g.height);
@@ -467,6 +510,172 @@ function renderGrain(g) {
 }
 
 // ===================
+// Blob Mode — Tiled text background + Three.js iridescent blob
+// ===================
+
+function renderTiledText(g) {
+  // Light editorial background
+  g.background(240, 238, 235);
+  g.fill(10, 10, 14);
+  g.noStroke();
+  g.textFont('Playfair Display');
+  g.textStyle(BOLD);
+  g.textAlign(LEFT, BASELINE);
+
+  let pattern = params.pattern || 'ADDICT NOISE ';
+  let fontSize = g.height * params.tileSize;
+  g.textSize(fontSize);
+
+  let lineH = fontSize * params.tileLineH;
+  let rowCount = Math.ceil(g.height / lineH) + 2;
+  let patternW = g.textWidth(pattern);
+  if (patternW <= 0) patternW = fontSize * 4;
+
+  // Baseline for the first row; slight push so descenders of row 0 don't clip
+  let firstBaseline = lineH * 0.85;
+
+  for (let row = 0; row < rowCount; row++) {
+    let y = firstBaseline + row * lineH;
+    // Horizontal offset per row (kaleidoscopic alignment)
+    let rowOffset = (row * patternW * params.tileRowOffset) % patternW;
+    let startX = -patternW - rowOffset;
+    for (let x = startX; x < g.width + patternW; x += patternW) {
+      g.text(pattern, x, y);
+    }
+  }
+}
+
+function initThree() {
+  if (typeof THREE === 'undefined') {
+    console.warn('[poster] THREE not loaded — Blob mode unavailable');
+    return;
+  }
+
+  let canvas = document.getElementById('three-canvas');
+  if (!canvas) {
+    console.warn('[poster] three-canvas element not found');
+    return;
+  }
+
+  threeRenderer = new THREE.WebGLRenderer({
+    canvas,
+    alpha: true,
+    antialias: true,
+    premultipliedAlpha: false,
+  });
+  threeRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  threeRenderer.setClearColor(0x000000, 0);
+
+  threeScene = new THREE.Scene();
+  threeCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+  threeCamera.position.set(0, 0, 4);
+  threeCamera.lookAt(0, 0, 0);
+
+  // Lights (for MeshPhysicalMaterial path)
+  let ambient = new THREE.AmbientLight(0xffffff, 0.6);
+  threeScene.add(ambient);
+  let keyLight = new THREE.DirectionalLight(0xffffff, 0.8);
+  keyLight.position.set(2, 3, 4);
+  threeScene.add(keyLight);
+
+  // Iridescent material via procedural matcap — gives the painted gradient
+  // look from the reference without needing an HDRI environment.
+  let matcap = createIridescentMatcap();
+  blobMaterial = new THREE.MeshMatcapMaterial({
+    matcap,
+    transparent: true,
+    opacity: 1.0,
+  });
+
+  // Geometry cycle — detail levels chosen to balance visual quality with
+  // consistent vertex counts across shapes.
+  blobGeometries = [
+    new THREE.IcosahedronGeometry(1, 3),
+    new THREE.SphereGeometry(1, 64, 48),
+    new THREE.BoxGeometry(1.4, 1.4, 1.4, 4, 4, 4),
+    new THREE.TorusGeometry(0.9, 0.38, 32, 96),
+    new THREE.TorusKnotGeometry(0.8, 0.28, 160, 24, 2, 3),
+    new THREE.OctahedronGeometry(1.2, 2),
+    new THREE.ConeGeometry(1.1, 1.8, 48, 1),
+    new THREE.DodecahedronGeometry(1.1, 0),
+  ];
+
+  blobMesh = new THREE.Mesh(blobGeometries[0], blobMaterial);
+  threeScene.add(blobMesh);
+
+  threeReady = true;
+}
+
+// Creates a CanvasTexture with a soft pink/lavender/blue/salmon vertical
+// gradient — applied as a matcap it looks like the reference's painted
+// iridescent blob. No HDRI required.
+function createIridescentMatcap() {
+  let c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 256;
+  let ctx = c.getContext('2d');
+
+  // Base gradient — top-down
+  let grad = ctx.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0, '#ffd1ec'); // soft pink
+  grad.addColorStop(0.28, '#e8c6ff'); // lavender
+  grad.addColorStop(0.52, '#a8d4ff'); // sky blue
+  grad.addColorStop(0.78, '#d9bfff'); // pale violet
+  grad.addColorStop(1, '#ffc1d4'); // rose
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 256, 256);
+
+  // Soft radial highlight in top-left — adds a subtle sheen
+  let high = ctx.createRadialGradient(100, 80, 0, 100, 80, 160);
+  high.addColorStop(0, 'rgba(255, 255, 255, 0.55)');
+  high.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.fillStyle = high;
+  ctx.fillRect(0, 0, 256, 256);
+
+  let tex = new THREE.CanvasTexture(c);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+function updateBlob() {
+  if (!threeReady) return;
+
+  // Rotate based on time so pause/play affects it too
+  let rot = time * params.blobRotSpeed;
+  blobMesh.rotation.x = rot * 0.6;
+  blobMesh.rotation.y = rot;
+
+  // Uniform scale from control
+  blobMesh.scale.setScalar(params.blobSize * 1.4);
+
+  // Auto-cycle geometries
+  if (time - blobLastSwap > params.blobCycleInterval) {
+    blobGeoIndex = (blobGeoIndex + 1) % blobGeometries.length;
+    blobMesh.geometry = blobGeometries[blobGeoIndex];
+    blobLastSwap = time;
+  }
+}
+
+function renderBlob() {
+  if (!threeReady) return;
+
+  let canvas = document.getElementById('three-canvas');
+  if (!canvas) return;
+
+  // Position and size the overlay canvas to match the P5 poster display area
+  canvas.style.left = displayX + 'px';
+  canvas.style.top = displayY + 'px';
+  canvas.style.width = displayW + 'px';
+  canvas.style.height = displayH + 'px';
+
+  threeRenderer.setSize(displayW, displayH, false);
+  threeCamera.aspect = displayW / displayH;
+  threeCamera.updateProjectionMatrix();
+
+  threeRenderer.render(threeScene, threeCamera);
+}
+
+// ===================
 // Text Layout
 // ===================
 
@@ -614,22 +823,28 @@ function bindControls() {
 
   // Render mode toggle
   let modeButtons = document.querySelectorAll('.mode-btn');
+  let applyMode = (mode) => {
+    params.renderMode = mode;
+    document.body.classList.toggle('mode-solid', mode === 'solid');
+    document.body.classList.toggle('mode-flow', mode === 'flow');
+    document.body.classList.toggle('mode-blob', mode === 'blob');
+    modeButtons.forEach((b) => {
+      b.classList.toggle('active', b.getAttribute('data-mode') === mode);
+    });
+    // Clear trail buffer when leaving a trail-based mode
+    if (mode !== 'blob') pg.background(5, 2, 8);
+  };
   modeButtons.forEach((btn) => {
     btn.addEventListener('click', () => {
       let mode = btn.getAttribute('data-mode');
       if (mode === params.renderMode) return;
       // Block Flow mode if font failed to load
       if (mode === 'flow' && fontLoadFailed) return;
-      params.renderMode = mode;
-      document.body.classList.toggle('mode-flow', mode === 'flow');
-      document.body.classList.toggle('mode-solid', mode === 'solid');
-      modeButtons.forEach((b) => b.classList.toggle('active', b === btn));
-      pg.background(5, 2, 8);
+      applyMode(mode);
     });
   });
-  // Initialize body class
-  document.body.classList.toggle('mode-flow', params.renderMode === 'flow');
-  document.body.classList.toggle('mode-solid', params.renderMode === 'solid');
+  // Initialize body class from current mode
+  applyMode(params.renderMode);
   // If font already failed by the time controls bind, reflect it
   if (fontLoadFailed) showFlowUnavailable();
 
@@ -655,6 +870,22 @@ function bindControls() {
   bindRange('ctrl-sampleDensity', 'sampleDensity', clearPointsCache);
   bindRange('ctrl-vertexNoiseAmount', 'vertexNoiseAmount');
   bindRange('ctrl-vertexNoiseScale', 'vertexNoiseScale');
+
+  // Blob-only controls
+  let patternInput = document.getElementById('ctrl-pattern');
+  if (patternInput) {
+    patternInput.value = params.pattern;
+    patternInput.addEventListener('input', (e) => {
+      params.pattern = e.target.value || ' ';
+    });
+  }
+  bindRange('ctrl-tileSize', 'tileSize');
+  bindRange('ctrl-tileLineH', 'tileLineH');
+  bindRange('ctrl-tileRowOffset', 'tileRowOffset');
+  bindRange('ctrl-blobSize', 'blobSize');
+  bindRange('ctrl-blobRotSpeed', 'blobRotSpeed');
+  bindRange('ctrl-blobCycleInterval', 'blobCycleInterval');
+  bindRange('ctrl-blobIridescence', 'blobIridescence');
 
   // Pause / Play
   let pauseBtn = document.getElementById('btn-pause');

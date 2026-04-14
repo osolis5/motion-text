@@ -8,10 +8,13 @@
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Anton&family=Bebas+Neue&family=Inter:wght@400;900&family=Space+Grotesk:wght@700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Anton&family=Bebas+Neue&family=Inter:wght@400;900&family=Playfair+Display:wght@900&family=Space+Grotesk:wght@700&display=swap" rel="stylesheet">
 
     <!-- P5.js -->
     <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+
+    <!-- Three.js (UMD build) -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -54,6 +57,17 @@
             background: var(--bg);
         }
         #poster-container canvas { display: block; }
+
+        /* Three.js overlay, positioned over the rendered poster area.
+           Use #poster-container prefix to outspecificity the general
+           `#poster-container canvas { display: block }` rule above. */
+        #poster-container #three-canvas {
+            position: absolute;
+            pointer-events: none;
+            display: none;
+            z-index: 10;
+        }
+        body.mode-blob #poster-container #three-canvas { display: block; }
 
         /* === Control Panel === */
         #controls {
@@ -306,14 +320,20 @@
         }
 
         /* --- Conditional visibility by mode --- */
-        body.mode-solid .flow-only { display: none; }
-        body.mode-flow .solid-only { display: none; }
+        body.mode-solid .flow-only,
+        body.mode-solid .blob-only { display: none; }
+        body.mode-flow .solid-only,
+        body.mode-flow .blob-only { display: none; }
+        body.mode-blob .solid-only,
+        body.mode-blob .flow-only { display: none; }
     </style>
 </head>
 <body>
     <div id="app">
         <!-- Poster Preview -->
-        <div id="poster-container"></div>
+        <div id="poster-container">
+            <canvas id="three-canvas"></canvas>
+        </div>
 
         <!-- Control Panel -->
         <div id="controls">
@@ -324,11 +344,13 @@
             <div class="section">
                 <div class="section-title">Render Mode</div>
                 <div class="mode-toggle">
-                    <button class="mode-btn active" data-mode="solid">Solid</button>
+                    <button class="mode-btn" data-mode="solid">Solid</button>
                     <button class="mode-btn" data-mode="flow">Flow</button>
+                    <button class="mode-btn active" data-mode="blob">Blob</button>
                 </div>
                 <div class="mode-desc solid-only">Transform-based characters. Any font. Fast.</div>
                 <div class="mode-desc flow-only">Vertex-deformed Ball Pill outlines. Liquid flow field.</div>
+                <div class="mode-desc blob-only">Tiled text background + iridescent 3D blob overlay.</div>
             </div>
 
             <!-- Typography -->
@@ -400,6 +422,55 @@
                     <label>Noise Scale</label>
                     <input type="range" id="ctrl-vertexNoiseScale" min="0.002" max="0.05" step="0.001" value="0.012">
                     <span class="value" id="ctrl-vertexNoiseScale-val">0.012</span>
+                </div>
+            </div>
+
+            <!-- Blob — Tiled Text Pattern -->
+            <div class="section blob-only">
+                <div class="section-title">Blob — Pattern</div>
+
+                <input type="text" id="ctrl-pattern" value="ADDICT NOISE " spellcheck="false" autocomplete="off">
+
+                <div class="control-row">
+                    <label>Text Size</label>
+                    <input type="range" id="ctrl-tileSize" min="0.03" max="0.25" step="0.005" value="0.09">
+                    <span class="value" id="ctrl-tileSize-val">0.09</span>
+                </div>
+                <div class="control-row">
+                    <label>Line Spacing</label>
+                    <input type="range" id="ctrl-tileLineH" min="0.75" max="1.3" step="0.01" value="0.98">
+                    <span class="value" id="ctrl-tileLineH-val">0.98</span>
+                </div>
+                <div class="control-row">
+                    <label>Row Offset</label>
+                    <input type="range" id="ctrl-tileRowOffset" min="0" max="1" step="0.01" value="0">
+                    <span class="value" id="ctrl-tileRowOffset-val">0</span>
+                </div>
+            </div>
+
+            <!-- Blob — 3D Object -->
+            <div class="section blob-only">
+                <div class="section-title">Blob — 3D Object</div>
+
+                <div class="control-row">
+                    <label>Size</label>
+                    <input type="range" id="ctrl-blobSize" min="0.2" max="1.4" step="0.02" value="0.8">
+                    <span class="value" id="ctrl-blobSize-val">0.8</span>
+                </div>
+                <div class="control-row">
+                    <label>Rotation</label>
+                    <input type="range" id="ctrl-blobRotSpeed" min="0" max="2" step="0.05" value="0.5">
+                    <span class="value" id="ctrl-blobRotSpeed-val">0.5</span>
+                </div>
+                <div class="control-row">
+                    <label>Cycle Sec</label>
+                    <input type="range" id="ctrl-blobCycleInterval" min="1" max="12" step="0.5" value="4">
+                    <span class="value" id="ctrl-blobCycleInterval-val">4</span>
+                </div>
+                <div class="control-row">
+                    <label>Iridescence</label>
+                    <input type="range" id="ctrl-blobIridescence" min="0" max="1" step="0.01" value="0.7">
+                    <span class="value" id="ctrl-blobIridescence-val">0.7</span>
                 </div>
             </div>
 
