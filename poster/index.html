@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generative Type Poster — Editor</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Anton&family=Bebas+Neue&family=Inter:wght@400;900&family=Space+Grotesk:wght@700&display=swap" rel="stylesheet">
+
+    <!-- P5.js -->
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg: #07060e;
+            --panel: #0c0b16;
+            --border: rgba(168, 85, 247, 0.12);
+            --accent: #a855f7;
+            --accent-dim: rgba(168, 85, 247, 0.4);
+            --text: #e2e0ea;
+            --text-muted: rgba(226, 224, 234, 0.35);
+            --text-dim: rgba(226, 224, 234, 0.18);
+            --input-bg: rgba(255, 255, 255, 0.04);
+            --section-gap: 20px;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', 'Helvetica Neue', sans-serif;
+            font-weight: 400;
+            font-size: 12px;
+            overflow: hidden;
+            -webkit-font-smoothing: antialiased;
+            user-select: none;
+        }
+
+        /* === Layout === */
+        #app {
+            display: flex;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #poster-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            background: var(--bg);
+        }
+        #poster-container canvas { display: block; }
+
+        /* === Control Panel === */
+        #controls {
+            width: 300px;
+            min-width: 300px;
+            height: 100vh;
+            overflow-y: auto;
+            overflow-x: hidden;
+            background: var(--panel);
+            border-left: 1px solid var(--border);
+            padding: 24px 20px 40px;
+            scrollbar-width: thin;
+            scrollbar-color: var(--accent-dim) transparent;
+        }
+        #controls::-webkit-scrollbar { width: 4px; }
+        #controls::-webkit-scrollbar-track { background: transparent; }
+        #controls::-webkit-scrollbar-thumb { background: var(--accent-dim); border-radius: 2px; }
+
+        .panel-header {
+            font-size: 9px;
+            font-weight: 400;
+            letter-spacing: 4px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 28px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        /* --- Sections --- */
+        .section {
+            margin-bottom: var(--section-gap);
+        }
+        .section-title {
+            font-size: 8px;
+            font-weight: 400;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: var(--accent);
+            margin-bottom: 14px;
+        }
+
+        /* --- Controls --- */
+        .control-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        .control-row label {
+            font-size: 11px;
+            color: var(--text-muted);
+            white-space: nowrap;
+            min-width: 80px;
+        }
+        .control-row .value {
+            font-size: 10px;
+            color: var(--text-dim);
+            min-width: 36px;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* --- Text Input --- */
+        input[type="text"] {
+            width: 100%;
+            background: var(--input-bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text);
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            font-weight: 900;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            padding: 10px 12px;
+            outline: none;
+            transition: border-color 0.2s;
+            margin-bottom: 12px;
+        }
+        input[type="text"]:focus {
+            border-color: var(--accent);
+        }
+
+        /* --- Select --- */
+        select {
+            width: 100%;
+            background: var(--input-bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text);
+            font-family: 'Inter', sans-serif;
+            font-size: 11px;
+            padding: 8px 10px;
+            outline: none;
+            cursor: pointer;
+            margin-bottom: 12px;
+            -webkit-appearance: none;
+        }
+        select:focus { border-color: var(--accent); }
+
+        /* --- Range Slider --- */
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            flex: 1;
+            height: 3px;
+            background: rgba(255, 255, 255, 0.06);
+            border-radius: 2px;
+            outline: none;
+            margin: 0 10px;
+            cursor: pointer;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--accent);
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+        input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.3);
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--accent);
+            border: none;
+            cursor: pointer;
+        }
+
+        /* --- Buttons --- */
+        .button-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        .btn {
+            flex: 1;
+            background: var(--input-bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-muted);
+            font-family: 'Inter', sans-serif;
+            font-size: 9px;
+            font-weight: 400;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            padding: 8px 0;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .btn:hover {
+            border-color: var(--accent);
+            color: var(--text);
+            background: rgba(168, 85, 247, 0.08);
+        }
+        .btn-accent {
+            border-color: var(--accent-dim);
+            color: var(--accent);
+        }
+        .btn-accent:hover {
+            background: rgba(168, 85, 247, 0.15);
+        }
+
+        /* --- Seed Display --- */
+        .seed-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        .seed-row .seed-val {
+            font-size: 10px;
+            color: var(--text-dim);
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* --- Divider --- */
+        .divider {
+            height: 1px;
+            background: var(--border);
+            margin: var(--section-gap) 0;
+        }
+
+        /* --- Mode indicator --- */
+        .mode-badge {
+            display: inline-block;
+            font-size: 8px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--accent);
+            background: rgba(168, 85, 247, 0.08);
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            padding: 4px 8px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <!-- Poster Preview -->
+        <div id="poster-container"></div>
+
+        <!-- Control Panel -->
+        <div id="controls">
+            <div class="panel-header">Poster Controls</div>
+            <div class="mode-badge">Editor Mode</div>
+
+            <!-- Typography -->
+            <div class="section">
+                <div class="section-title">Typography</div>
+
+                <input type="text" id="ctrl-text" value="MOTION" spellcheck="false" autocomplete="off">
+
+                <select id="ctrl-font">
+                    <option value="Anton">Anton — Condensed Display</option>
+                    <option value="Bebas Neue">Bebas Neue — Classic Display</option>
+                    <option value="Inter">Inter Black — Modern Grotesque</option>
+                    <option value="Space Grotesk">Space Grotesk — Geometric</option>
+                </select>
+
+                <div class="control-row">
+                    <label>Scale</label>
+                    <input type="range" id="ctrl-textScale" min="0.3" max="1.2" step="0.01" value="0.92">
+                    <span class="value" id="ctrl-textScale-val">0.92</span>
+                </div>
+                <div class="control-row">
+                    <label>Line Height</label>
+                    <input type="range" id="ctrl-lineHeight" min="0.5" max="1.2" step="0.01" value="0.82">
+                    <span class="value" id="ctrl-lineHeight-val">0.82</span>
+                </div>
+            </div>
+
+            <!-- Distortion -->
+            <div class="section">
+                <div class="section-title">Distortion</div>
+
+                <div class="control-row">
+                    <label>Amount</label>
+                    <input type="range" id="ctrl-distortAmount" min="0" max="120" step="1" value="35">
+                    <span class="value" id="ctrl-distortAmount-val">35</span>
+                </div>
+                <div class="control-row">
+                    <label>Speed</label>
+                    <input type="range" id="ctrl-distortSpeed" min="0.05" max="2.0" step="0.05" value="0.4">
+                    <span class="value" id="ctrl-distortSpeed-val">0.4</span>
+                </div>
+                <div class="control-row">
+                    <label>Grain</label>
+                    <input type="range" id="ctrl-distortScale" min="0.1" max="3.0" step="0.1" value="0.5">
+                    <span class="value" id="ctrl-distortScale-val">0.5</span>
+                </div>
+                <div class="control-row">
+                    <label>Rotation</label>
+                    <input type="range" id="ctrl-rotationAmount" min="0" max="0.15" step="0.005" value="0.02">
+                    <span class="value" id="ctrl-rotationAmount-val">0.02</span>
+                </div>
+            </div>
+
+            <!-- Color -->
+            <div class="section">
+                <div class="section-title">Color — UV Palette</div>
+
+                <div class="control-row">
+                    <label>Hue</label>
+                    <input type="range" id="ctrl-hueBase" min="200" max="320" step="1" value="265">
+                    <span class="value" id="ctrl-hueBase-val">265</span>
+                </div>
+                <div class="control-row">
+                    <label>Hue Range</label>
+                    <input type="range" id="ctrl-hueRange" min="0" max="80" step="1" value="40">
+                    <span class="value" id="ctrl-hueRange-val">40</span>
+                </div>
+                <div class="control-row">
+                    <label>Saturation</label>
+                    <input type="range" id="ctrl-saturation" min="0" max="100" step="1" value="80">
+                    <span class="value" id="ctrl-saturation-val">80</span>
+                </div>
+                <div class="control-row">
+                    <label>Lightness</label>
+                    <input type="range" id="ctrl-lightness" min="20" max="90" step="1" value="60">
+                    <span class="value" id="ctrl-lightness-val">60</span>
+                </div>
+                <div class="control-row">
+                    <label>Glow</label>
+                    <input type="range" id="ctrl-glowAmount" min="0" max="80" step="1" value="15">
+                    <span class="value" id="ctrl-glowAmount-val">15</span>
+                </div>
+            </div>
+
+            <!-- Animation -->
+            <div class="section">
+                <div class="section-title">Animation</div>
+
+                <div class="control-row">
+                    <label>Gradient Drift</label>
+                    <input type="range" id="ctrl-gradientSpeed" min="0" max="2.0" step="0.05" value="0.3">
+                    <span class="value" id="ctrl-gradientSpeed-val">0.3</span>
+                </div>
+                <div class="control-row">
+                    <label>Trail Fade</label>
+                    <input type="range" id="ctrl-trailOpacity" min="3" max="80" step="1" value="12">
+                    <span class="value" id="ctrl-trailOpacity-val">12</span>
+                </div>
+            </div>
+
+            <!-- Layers -->
+            <div class="section">
+                <div class="section-title">Layers</div>
+
+                <div class="control-row">
+                    <label>Count</label>
+                    <input type="range" id="ctrl-layerCount" min="1" max="6" step="1" value="3">
+                    <span class="value" id="ctrl-layerCount-val">3</span>
+                </div>
+                <div class="control-row">
+                    <label>Spread</label>
+                    <input type="range" id="ctrl-layerSpread" min="0" max="60" step="1" value="18">
+                    <span class="value" id="ctrl-layerSpread-val">18</span>
+                </div>
+                <div class="control-row">
+                    <label>Depth Scale</label>
+                    <input type="range" id="ctrl-layerScale" min="0" max="0.3" step="0.01" value="0.12">
+                    <span class="value" id="ctrl-layerScale-val">0.12</span>
+                </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <!-- Actions -->
+            <div class="section">
+                <div class="section-title">Actions</div>
+
+                <div class="button-row">
+                    <button class="btn" id="btn-pause">Pause</button>
+                    <button class="btn" id="btn-clear">Clear</button>
+                </div>
+                <div class="button-row">
+                    <button class="btn btn-accent" id="btn-save">Save PNG</button>
+                    <button class="btn" id="btn-seed">New Seed</button>
+                </div>
+                <div class="seed-row">
+                    <span class="value">Seed:</span>
+                    <span class="seed-val" id="seed-display">42</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="sketch.js"></script>
+</body>
+</html>
