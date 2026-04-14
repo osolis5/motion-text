@@ -255,6 +255,53 @@
             padding: 4px 8px;
             margin-bottom: 20px;
         }
+
+        /* --- Mode toggle --- */
+        .mode-toggle {
+            display: flex;
+            gap: 0;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 6px;
+        }
+        .mode-btn {
+            flex: 1;
+            background: transparent;
+            border: none;
+            border-radius: 0;
+            color: var(--text-muted);
+            font-family: 'Inter', sans-serif;
+            font-size: 9px;
+            font-weight: 400;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            padding: 9px 0;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .mode-btn + .mode-btn {
+            border-left: 1px solid var(--border);
+        }
+        .mode-btn:hover {
+            color: var(--text);
+            background: rgba(168, 85, 247, 0.05);
+        }
+        .mode-btn.active {
+            background: rgba(168, 85, 247, 0.12);
+            color: var(--accent);
+        }
+        .mode-desc {
+            font-size: 9px;
+            line-height: 1.4;
+            color: var(--text-dim);
+            margin-top: 8px;
+            margin-bottom: 4px;
+        }
+
+        /* --- Conditional visibility by mode --- */
+        body.mode-solid .flow-only { display: none; }
+        body.mode-flow .solid-only { display: none; }
     </style>
 </head>
 <body>
@@ -267,13 +314,24 @@
             <div class="panel-header">Poster Controls</div>
             <div class="mode-badge">Editor Mode</div>
 
+            <!-- Render Mode -->
+            <div class="section">
+                <div class="section-title">Render Mode</div>
+                <div class="mode-toggle">
+                    <button class="mode-btn active" data-mode="solid">Solid</button>
+                    <button class="mode-btn" data-mode="flow">Flow</button>
+                </div>
+                <div class="mode-desc solid-only">Transform-based characters. Any font. Fast.</div>
+                <div class="mode-desc flow-only">Vertex-deformed Ball Pill outlines. Liquid flow field.</div>
+            </div>
+
             <!-- Typography -->
             <div class="section">
                 <div class="section-title">Typography</div>
 
                 <input type="text" id="ctrl-text" value="MOTION" spellcheck="false" autocomplete="off">
 
-                <select id="ctrl-font">
+                <select id="ctrl-font" class="solid-only">
                     <option value="Anton">Anton — Condensed Display</option>
                     <option value="Bebas Neue">Bebas Neue — Classic Display</option>
                     <option value="Inter">Inter Black — Modern Grotesque</option>
@@ -315,6 +373,27 @@
                     <label>Rotation</label>
                     <input type="range" id="ctrl-rotationAmount" min="0" max="0.15" step="0.005" value="0.02">
                     <span class="value" id="ctrl-rotationAmount-val">0.02</span>
+                </div>
+            </div>
+
+            <!-- Flow — Vertex Deformation -->
+            <div class="section flow-only">
+                <div class="section-title">Flow — Vertex Deformation</div>
+
+                <div class="control-row">
+                    <label>Sample Density</label>
+                    <input type="range" id="ctrl-sampleDensity" min="0.1" max="1.5" step="0.05" value="0.35">
+                    <span class="value" id="ctrl-sampleDensity-val">0.35</span>
+                </div>
+                <div class="control-row">
+                    <label>Noise Amount</label>
+                    <input type="range" id="ctrl-vertexNoiseAmount" min="0" max="40" step="0.5" value="10">
+                    <span class="value" id="ctrl-vertexNoiseAmount-val">10</span>
+                </div>
+                <div class="control-row">
+                    <label>Noise Scale</label>
+                    <input type="range" id="ctrl-vertexNoiseScale" min="0.002" max="0.05" step="0.001" value="0.012">
+                    <span class="value" id="ctrl-vertexNoiseScale-val">0.012</span>
                 </div>
             </div>
 
