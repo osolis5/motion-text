@@ -63,19 +63,12 @@ let displayX, displayY, displayW, displayH;
 
 // --- Flow mode font + point cache ---
 let ballPillFont = null;
+let fontLoadFailed = false;
 let pointsCache = new Map(); // key: `${char}|${sampleDensity}` -> { subpaths, bounds }
 
-// ===================
-// Preload
-// ===================
-
-function preload() {
-  ballPillFont = loadFont(
-    'fonts/BallPill-Regular.otf',
-    () => console.log('[poster] Ball Pill loaded'),
-    (err) => console.warn('[poster] Ball Pill failed to load', err)
-  );
-}
+// Font loads asynchronously in setup() (not preload()) so a failed load —
+// e.g. file:// protocol blocking local font fetches — never blocks the
+// rest of the sketch. Solid mode works without Ball Pill.
 
 // ===================
 // P5.js Lifecycle
@@ -93,6 +86,20 @@ function setup() {
   noiseSeed(params.seed);
   calculateDisplay();
   bindControls();
+
+  // Kick off font load — callbacks fire asynchronously
+  loadFont(
+    'fonts/BallPill-Regular.otf',
+    (f) => {
+      ballPillFont = f;
+      console.log('[poster] Ball Pill loaded');
+    },
+    (err) => {
+      fontLoadFailed = true;
+      console.warn('[poster] Ball Pill failed to load — Flow mode disabled.', err);
+      showFlowUnavailable();
+    }
+  );
 
   // Fill poster with void
   pg.background(5, 2, 8);
@@ -611,6 +618,8 @@ function bindControls() {
     btn.addEventListener('click', () => {
       let mode = btn.getAttribute('data-mode');
       if (mode === params.renderMode) return;
+      // Block Flow mode if font failed to load
+      if (mode === 'flow' && fontLoadFailed) return;
       params.renderMode = mode;
       document.body.classList.toggle('mode-flow', mode === 'flow');
       document.body.classList.toggle('mode-solid', mode === 'solid');
@@ -621,6 +630,8 @@ function bindControls() {
   // Initialize body class
   document.body.classList.toggle('mode-flow', params.renderMode === 'flow');
   document.body.classList.toggle('mode-solid', params.renderMode === 'solid');
+  // If font already failed by the time controls bind, reflect it
+  if (fontLoadFailed) showFlowUnavailable();
 
   // All range sliders
   bindRange('ctrl-textScale', 'textScale');
@@ -695,4 +706,27 @@ function bindRange(elementId, paramKey, onChange) {
     if (valDisplay) valDisplay.textContent = val;
     if (typeof onChange === 'function') onChange();
   });
+}
+
+// Disables the Flow button when Ball Pill can't be loaded (e.g. file://).
+function showFlowUnavailable() {
+  let flowBtn = document.querySelector('.mode-btn[data-mode="flow"]');
+  if (flowBtn) {
+    flowBtn.disabled = true;
+    flowBtn.classList.add('disabled');
+    flowBtn.title = 'Flow mode requires serving over HTTP (font loading is blocked on file://). Try http://localhost:3001';
+  }
+  let flowDesc = document.querySelector('.mode-desc.flow-only');
+  if (flowDesc) {
+    flowDesc.textContent = 'Unavailable — serve via HTTP to enable (file:// blocks font loading).';
+  }
+  // If we were in flow mode, fall back to solid
+  if (params.renderMode === 'flow') {
+    params.renderMode = 'solid';
+    document.body.classList.remove('mode-flow');
+    document.body.classList.add('mode-solid');
+    document.querySelectorAll('.mode-btn').forEach((b) => {
+      b.classList.toggle('active', b.getAttribute('data-mode') === 'solid');
+    });
+  }
 }
