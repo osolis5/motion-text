@@ -257,6 +257,14 @@
 <body>
     <a href="index.html" class="back">&larr; Back</a>
 
+    <script>
+        // Hide standalone back link when embedded in an iframe
+        // (parent portfolio page provides its own navigation)
+        if (window !== window.top) {
+            document.querySelector('.back').style.display = 'none';
+        }
+    </script>
+
     <div id="stage">
         <div id="sketch">
             <canvas id="three-canvas"></canvas>
