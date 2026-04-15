@@ -183,6 +183,53 @@
         #version {
             color: rgba(255,255,255,0.15);
         }
+
+        /* Mobile Safari / iOS Chrome requires a user gesture before
+           getUserMedia resolves and AudioContext can be resumed.
+           This overlay is the entry point — first tap starts audio. */
+        #mic-gate {
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(10, 10, 10, 0.92);
+            -webkit-backdrop-filter: blur(8px);
+            backdrop-filter: blur(8px);
+            cursor: pointer;
+            transition: opacity 0.3s ease;
+        }
+        #mic-gate.fade-out {
+            opacity: 0;
+            pointer-events: none;
+        }
+        .mic-gate-inner {
+            text-align: center;
+            color: #fff;
+            padding: 24px;
+            max-width: 360px;
+        }
+        .mic-gate-title {
+            font-size: 36px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            margin-bottom: 10px;
+        }
+        .mic-gate-sub {
+            font-size: 10px;
+            letter-spacing: 4px;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.6);
+            margin-bottom: 28px;
+        }
+        .mic-gate-hint {
+            font-size: 9px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.3);
+            line-height: 1.7;
+        }
     </style>
 </head>
 <body>
@@ -481,7 +528,17 @@
         async function initAudio() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                const ctx = new AudioContext();
+                // webkitAudioContext fallback for older iOS
+                const AC = window.AudioContext || window.webkitAudioContext;
+                const ctx = new AC();
+                // On mobile (iOS Safari, iOS Chrome, Android Chrome) the
+                // AudioContext is created in the "suspended" state and must
+                // be explicitly resumed from inside a user-gesture handler.
+                // initAudio is called from a tap listener, so .resume()
+                // succeeds here.
+                if (ctx.state === 'suspended') {
+                    try { await ctx.resume(); } catch (_) {}
+                }
                 const src = ctx.createMediaStreamSource(stream);
                 const analyser = ctx.createAnalyser();
                 analyser.fftSize = 2048;
@@ -831,9 +888,42 @@
         window.addEventListener('resize', fitToViewport);
 
         // ═══════════════════════════════════════════════════════
-        //  START
+        //  START — gate mic init behind a user gesture
         // ═══════════════════════════════════════════════════════
-        initAudio();
+        // On iOS Safari and iOS Chrome (both WebKit), getUserMedia
+        // and AudioContext.resume() only work if called from inside
+        // a user-initiated event. This overlay captures the first
+        // tap/click and uses it to kick off initAudio().
+        (function setupMicGate() {
+            const gate = document.createElement('div');
+            gate.id = 'mic-gate';
+            gate.innerHTML =
+                '<div class="mic-gate-inner">' +
+                    '<div class="mic-gate-title">Breath</div>' +
+                    '<div class="mic-gate-sub">Tap to begin</div>' +
+                    '<div class="mic-gate-hint">' +
+                        'Microphone required &middot; ' +
+                        'allow access when prompted' +
+                    '</div>' +
+                '</div>';
+            document.body.appendChild(gate);
+
+            let started = false;
+            async function start(e) {
+                if (started) return;
+                started = true;
+                if (e && typeof e.preventDefault === 'function') {
+                    e.preventDefault();
+                }
+                gate.classList.add('fade-out');
+                setTimeout(function () {
+                    if (gate.parentNode) gate.parentNode.removeChild(gate);
+                }, 300);
+                await initAudio();
+            }
+            gate.addEventListener('click', start, { once: true });
+            gate.addEventListener('touchend', start, { once: true });
+        })();
     </script>
 </body>
 </html>
