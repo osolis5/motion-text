@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Breath</title>
+    <meta name="description" content="Blow into your microphone to create waves on a 3D water surface">
+    <meta name="theme-color" content="#0A0A0A">
+
+    <!-- IBM Plex Mono for poster overlay labels -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <!-- Shared poster systems -->
+    <script src="poster-system.js"></script>
+    <script src="projection-mapping.js"></script>
+
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            background: #0A0A0A;
+            overflow: hidden;
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            color: #fff;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Poster stage */
+        #stage {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #sketch {
+            position: relative;
+            box-shadow: 0 30px 120px rgba(0, 0, 0, 0.55);
+        }
+        #sketch canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        #three-canvas { z-index: 1; }
+        #overlay-canvas {
+            z-index: 2;
+            pointer-events: none;
+        }
+
+        .ui-panel {
+            position: fixed;
+            z-index: 100;
+            pointer-events: none;
+        }
+        .ui-panel > * { pointer-events: auto; }
+
+        .back {
+            position: fixed;
+            top: 22px;
+            left: 24px;
+            z-index: 110;
+            font-size: 9px;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.25);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+        .back:hover { color: rgba(255, 255, 255, 0.6); }
+
+        #ui-left {
+            top: 60px;
+            left: 24px;
+            width: 210px;
+        }
+        .ui-title {
+            font-size: 28px;
+            font-weight: 700;
+            line-height: 1.0;
+            letter-spacing: -0.5px;
+            margin-bottom: 4px;
+        }
+        .ui-subtitle {
+            font-size: 9px;
+            font-weight: 400;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.3);
+            margin-bottom: 22px;
+        }
+        .ui-divider {
+            width: 100%;
+            height: 1px;
+            background: rgba(255, 255, 255, 0.1);
+            margin: 16px 0;
+        }
+        .ui-label {
+            font-size: 9px;
+            font-weight: 500;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.25);
+            margin-bottom: 10px;
+        }
+
+        .level-bar {
+            width: 100%;
+            height: 3px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .level-fill {
+            height: 100%;
+            width: 0%;
+            background: #6495ED;
+            transition: width 0.06s linear;
+        }
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            letter-spacing: 1px;
+            color: rgba(255,255,255,0.15);
+            margin-bottom: 4px;
+        }
+        .info-val { color: rgba(255,255,255,0.3); }
+
+        #ui-right {
+            top: 60px;
+            right: 24px;
+        }
+        #spec-canvas {
+            display: block;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.02);
+            width: 240px;
+            height: 120px;
+        }
+
+        #ui-bottom {
+            bottom: 22px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            font-size: 9px;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+        }
+        #status {
+            color: rgba(255, 255, 255, 0.3);
+            padding: 5px 10px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        #status.st-loading { color: rgba(255,255,255,0.3); border-color: rgba(255,255,255,0.1); }
+        #status.st-ready { color: rgba(100, 149, 237, 0.7); border-color: rgba(100, 149, 237, 0.25); }
+        #status.st-active { color: #6495ED; border-color: rgba(100, 149, 237, 0.5); }
+        #status.st-error { color: rgba(255, 100, 100, 0.8); border-color: rgba(255, 100, 100, 0.3); }
+
+        #hud-keys {
+            color: rgba(255,255,255,0.22);
+            white-space: nowrap;
+        }
+        #hud-keys b {
+            color: rgba(255,255,255,0.45);
+            font-weight: 400;
+            margin-right: 2px;
+        }
+        #hud-keys .sep {
+            opacity: 0.35;
+            margin: 0 8px;
+        }
+        #version {
+            color: rgba(255,255,255,0.15);
+        }
+    </style>
+</head>
+<body>
+    <a href="index.html" class="back">&larr; Back</a>
+
+    <div id="stage">
+        <div id="sketch">
+            <canvas id="three-canvas"></canvas>
+            <canvas id="overlay-canvas"></canvas>
+        </div>
+    </div>
+
+    <div id="ui-left" class="ui-panel">
+        <div class="ui-title">Breath</div>
+        <div class="ui-subtitle">Experiment 03 — Wave Dynamics</div>
+        <div class="ui-divider"></div>
+        <div class="ui-label">Blow Intensity</div>
+        <div class="level-bar"><div class="level-fill" id="level-fill"></div></div>
+        <div class="ui-divider"></div>
+        <div class="ui-label">Info</div>
+        <div class="info-row"><span>Points</span><span class="info-val" id="info-count">0</span></div>
+        <div class="info-row"><span>Wave Height</span><span class="info-val" id="info-height">0</span></div>
+        <div class="info-row"><span>Interaction</span><span class="info-val" id="info-mode">Mic</span></div>
+        <div class="info-row"><span>Ambient</span><span class="info-val" id="info-floor">0</span></div>
+    </div>
+
+    <div id="ui-right" class="ui-panel">
+        <div class="ui-label">Spectrum</div>
+        <canvas id="spec-canvas" width="240" height="120"></canvas>
+    </div>
+
+    <div id="ui-bottom" class="ui-panel">
+        <div id="status" class="st-loading">Loading</div>
+        <div id="hud-keys">
+            <b>H</b> Overlay
+            <span class="sep">·</span>
+            <b>P</b> Project
+            <span class="sep">·</span>
+            <b>S</b> Save
+        </div>
+        <div id="version">v3.1</div>
+    </div>
+
+    <script type="importmap">
+    { "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }}
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        // ═══════════════════════════════════════════════════════
+        //  POSTER GEOMETRY
+        // ═══════════════════════════════════════════════════════
+        const POSTER_W = 660;
+        const POSTER_H = 900;
+        let overlayHidden = false;
+
+        // ═══════════════════════════════════════════════════════
+        //  CONFIG
+        // ═══════════════════════════════════════════════════════
+        const CONFIG = {
+            cols: 100,
+            rows: 70,
+            spacing: 0.014,
+
+            // CFD wave equation params
+            waveSpeed: 0.7,         // world units / sec
+            substeps: 2,            // simulation steps per frame
+            damping: 0.008,         // velocity damping per substep
+            edgeAbsorb: 0.04,       // extra damping at boundaries
+            edgeWidth: 6,           // absorbing boundary thickness (cells)
+            maxHeight: 0.15,        // safety clamp
+
+            // Blow — Gaussian circular ripple
+            rippleRadius: 4,        // base radius (grid cells)
+            rippleRadiusBlow: 4,    // extra radius at full blow
+            rippleAmplitude: 0.06,  // peak amplitude at full blow
+            rippleInterval: 18,     // base frames between ripples
+
+            // --- Mic sensitivity ---
+            // Raised thresholds + adaptive noise floor so ambient
+            // room sound (fans, HVAC, conversation, keyboard typing)
+            // doesn't trigger waves. Only intentional directed
+            // breath into the mic produces a reading.
+            amplitudeThreshold: 70,   // absolute floor, was 30
+            blowThreshold: 0.95,      // low/mid ratio, was 0.6
+            flatnessThreshold: 0.10,  // spectral flatness, was 0.08
+            floorMultiplier: 2.4,     // breath must exceed ambient × this
+            floorAlpha: 0.025,        // noise-floor EMA speed (slow)
+            minBlowDelta: 25,         // absolute rise above floor required
+            blowSmoothing: 0.30,      // slightly slower attack for stability
+
+            // Mouse / touch
+            mouseRadius: 3,         // grid cells
+            mouseAmplitude: 0.025,
+            mouseCooldown: 8,
+
+            particleSize: 7.0,
+            bloomStrength: 0.5,
+            bloomRadius: 0.4,
+            bloomThreshold: 0.8,
+        };
+
+        // ═══════════════════════════════════════════════════════
+        //  STATE
+        // ═══════════════════════════════════════════════════════
+        const state = {
+            blowIntensity: 0,
+            audioCtx: null,
+            analyser: null,
+            freqData: null,
+            hasMic: false,
+            noiseFloor: 20,     // adaptive ambient level
+            mouseDown: false,
+            mouseRow: 0,
+            mouseCol: 0,
+        };
+        let rippleCooldown = 0;
+        let mouseCooldown = 0;
+
+        // ═══════════════════════════════════════════════════════
+        //  THREE.JS SCENE
+        // ═══════════════════════════════════════════════════════
+        const canvas = document.getElementById('three-canvas');
+        canvas.width = POSTER_W;
+        canvas.height = POSTER_H;
+
+        const overlayCanvas = document.getElementById('overlay-canvas');
+        overlayCanvas.width = POSTER_W;
+        overlayCanvas.height = POSTER_H;
+        const overlayCtx = overlayCanvas.getContext('2d');
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0A0A0A);
+
+        // Orthographic camera — fixed portrait aspect matches the
+        // other posters, no more innerWidth-relative frustum.
+        const aspect = POSTER_W / POSTER_H;
+        const fruH = 0.6;
+        const camera = new THREE.OrthographicCamera(
+            -fruH * aspect, fruH * aspect, fruH, -fruH, 0.1, 100
+        );
+        camera.position.set(0, 1.2, 1.5);
+        camera.lookAt(0, 0, 0);
+
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+        renderer.setSize(POSTER_W, POSTER_H, false);
+        renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.3;
+
+        const composer = new EffectComposer(renderer);
+        composer.addPass(new RenderPass(scene, camera));
+        composer.addPass(new UnrealBloomPass(
+            new THREE.Vector2(POSTER_W, POSTER_H),
+            CONFIG.bloomStrength, CONFIG.bloomRadius, CONFIG.bloomThreshold
+        ));
+
+        function fitToViewport() {
+            const ratio = POSTER_W / POSTER_H;
+            const vw = window.innerWidth;
+            const vh = window.innerHeight;
+            let cw, ch;
+            if (vw / vh > ratio) {
+                ch = vh * 0.92;
+                cw = ch * ratio;
+            } else {
+                cw = vw * 0.90;
+                ch = cw / ratio;
+            }
+            const sketch = document.getElementById('sketch');
+            if (sketch) {
+                sketch.style.width = cw + 'px';
+                sketch.style.height = ch + 'px';
+            }
+        }
+        fitToViewport();
+
+        // ═══════════════════════════════════════════════════════
+        //  GRID DATA — two-buffer wave equation (CFDPython)
+        //
+        //  2D wave equation with damping:
+        //    d²h/dt² = c²·∇²h − γ·dh/dt
+        //
+        //  Finite difference (FTCS, second-order time):
+        //    h_new = 2·h_curr − h_prev
+        //          + (c·dt/dx)²·(h_L + h_R + h_U + h_D − 4·h_C)
+        //          − γ·(h_curr − h_prev)
+        // ═══════════════════════════════════════════════════════
+        const cols = CONFIG.cols;
+        const rows = CONFIG.rows;
+        const N = cols * rows;
+
+        const gridX = new Float32Array(N);
+        const gridZ = new Float32Array(N);
+        let bufA = new Float32Array(N);   // h(n)   — current
+        let bufB = new Float32Array(N);   // h(n-1) — previous
+
+        const halfW = (cols - 1) * CONFIG.spacing / 2;
+        const halfD = (rows - 1) * CONFIG.spacing / 2;
+
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                const i = r * cols + c;
+                gridX[i] = c * CONFIG.spacing - halfW;
+                gridZ[i] = r * CONFIG.spacing - halfD;
+            }
+        }
+
+        // Pre-compute Courant number squared
+        const dt_sub = (1 / 60) / CONFIG.substeps;
+        const courant2 = Math.pow(CONFIG.waveSpeed * dt_sub / CONFIG.spacing, 2);
+
+        // ═══════════════════════════════════════════════════════
+        //  GAUSSIAN RIPPLE — like dropping a stone in water
+        // ═══════════════════════════════════════════════════════
+        function createRipple(cRow, cCol, radius, amplitude) {
+            const r2 = radius * radius;
+            const span = Math.ceil(radius * 3);
+            const rMin = Math.max(1, Math.floor(cRow - span));
+            const rMax = Math.min(rows - 2, Math.ceil(cRow + span));
+            const cMin = Math.max(1, Math.floor(cCol - span));
+            const cMax = Math.min(cols - 2, Math.ceil(cCol + span));
+            for (let r = rMin; r <= rMax; r++) {
+                for (let c = cMin; c <= cMax; c++) {
+                    const dr = r - cRow, dc = c - cCol;
+                    const d2 = dr * dr + dc * dc;
+                    if (d2 < span * span) {
+                        bufA[r * cols + c] += amplitude * Math.exp(-d2 / (2 * r2));
+                    }
+                }
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════
+        //  WAVE SIMULATION — CFD finite-difference solver
+        // ═══════════════════════════════════════════════════════
+        function simulate() {
+            const damp = CONFIG.damping;
+            const edgeW = CONFIG.edgeWidth;
+            const edgeAbs = CONFIG.edgeAbsorb;
+            const maxH = CONFIG.maxHeight;
+
+            for (let step = 0; step < CONFIG.substeps; step++) {
+                // 2D wave equation — second-order time, central-space
+                for (let r = 1; r < rows - 1; r++) {
+                    for (let c = 1; c < cols - 1; c++) {
+                        const i = r * cols + c;
+                        const laplacian = bufA[i - 1] + bufA[i + 1] +
+                                          bufA[i - cols] + bufA[i + cols] -
+                                          4 * bufA[i];
+                        // h_new = 2·h_curr − h_prev + courant²·∇²h − γ·(h_curr − h_prev)
+                        bufB[i] = 2 * bufA[i] - bufB[i] +
+                                  courant2 * laplacian -
+                                  damp * (bufA[i] - bufB[i]);
+                    }
+                }
+
+                // Absorbing boundary — extra damping near edges
+                for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                        const ed = Math.min(r, rows - 1 - r, c, cols - 1 - c);
+                        if (ed < edgeW) {
+                            const i = r * cols + c;
+                            const t = ed / edgeW;
+                            bufB[i] *= (1 - edgeAbs * (1 - t));
+                        }
+                    }
+                }
+
+                // Height clamp (safety)
+                for (let i = 0; i < N; i++) {
+                    if (bufB[i] > maxH) bufB[i] = maxH;
+                    else if (bufB[i] < -maxH) bufB[i] = -maxH;
+                }
+
+                // Swap: prev ← curr, curr ← next
+                const tmp = bufA; bufA = bufB; bufB = tmp;
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════
+        //  AUDIO / BLOW DETECTION
+        // ═══════════════════════════════════════════════════════
+        const statusEl = document.getElementById('status');
+        const levelFill = document.getElementById('level-fill');
+        const specCanvas = document.getElementById('spec-canvas');
+        const specCtx = specCanvas.getContext('2d');
+
+        async function initAudio() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const ctx = new AudioContext();
+                const src = ctx.createMediaStreamSource(stream);
+                const analyser = ctx.createAnalyser();
+                analyser.fftSize = 2048;
+                analyser.smoothingTimeConstant = 0.5;
+                src.connect(analyser);
+
+                state.audioCtx = ctx;
+                state.analyser = analyser;
+                state.freqData = new Uint8Array(analyser.frequencyBinCount);
+                state.hasMic = true;
+
+                statusEl.className = 'st-ready';
+                statusEl.textContent = 'Listening';
+                document.getElementById('info-mode').textContent = 'Mic';
+            } catch (e) {
+                statusEl.textContent = 'No Mic \u2014 Click to interact';
+                document.getElementById('info-mode').textContent = 'Mouse';
+            }
+        }
+
+        function detectBlow() {
+            if (!state.analyser) return;
+            state.analyser.getByteFrequencyData(state.freqData);
+            const data = state.freqData;
+            const binW = state.audioCtx.sampleRate / 2 / data.length;
+            const lowEnd = Math.floor(400 / binW);
+            const midEnd = Math.floor(2000 / binW);
+
+            let lowSum = 0, midSum = 0;
+            for (let i = 0; i < lowEnd; i++) lowSum += data[i];
+            for (let i = lowEnd; i < midEnd; i++) midSum += data[i];
+            const lowAvg = lowSum / lowEnd;
+            const midAvg = midSum / (midEnd - lowEnd);
+
+            const len = Math.min(data.length, midEnd);
+            let logSum = 0, linSum = 0;
+            for (let i = 1; i < len; i++) { logSum += Math.log(data[i] + 1); linSum += data[i]; }
+            const flatness = Math.exp(logSum / len) / (linSum / len + 0.001);
+
+            const score = lowAvg / (midAvg + 1);
+
+            // --- Adaptive noise floor ---
+            // Track ambient room tone with a slow EMA. Only update
+            // the floor when NOT currently detecting a blow, so an
+            // ongoing breath doesn't drag the floor up to cancel
+            // itself. Over ~1 second the floor settles to the
+            // background level (fan, HVAC, conversation, typing).
+            if (state.blowIntensity < 0.05) {
+                state.noiseFloor = state.noiseFloor * (1 - CONFIG.floorAlpha)
+                                 + lowAvg * CONFIG.floorAlpha;
+            }
+
+            // Breath must clear ALL of:
+            //   1. An absolute volume floor (raised from 30 → 70)
+            //   2. A multiplicative margin above the ambient floor
+            //   3. A minimum absolute delta above the ambient floor
+            //   4. A low/mid ratio indicating low-heavy spectrum
+            //   5. Enough spectral flatness (broadband, not tonal)
+            // Checks 2+3 together reject "loud but flat" ambient
+            // like a nearby fan — the floor tracks it and the
+            // relative threshold fails.
+            const absoluteMin = CONFIG.amplitudeThreshold;
+            const floorGate = Math.max(
+                absoluteMin,
+                state.noiseFloor * CONFIG.floorMultiplier
+            );
+            const rise = lowAvg - state.noiseFloor;
+
+            const isBlow = lowAvg > floorGate &&
+                           rise   > CONFIG.minBlowDelta &&
+                           score  > CONFIG.blowThreshold &&
+                           flatness > CONFIG.flatnessThreshold;
+
+            // Intensity is the RISE above floor, not absolute level,
+            // so a quiet room + moderate breath reads the same as a
+            // loud room + strong breath.
+            const target = isBlow ? Math.min(rise / 90, 1) : 0;
+            state.blowIntensity += (target - state.blowIntensity) * CONFIG.blowSmoothing;
+        }
+
+        function drawSpectrum() {
+            const w = specCanvas.width, hh = specCanvas.height;
+            specCtx.clearRect(0, 0, w, hh);
+            if (!state.freqData) {
+                specCtx.fillStyle = 'rgba(255,255,255,0.06)';
+                specCtx.font = '10px Helvetica';
+                specCtx.textAlign = 'center';
+                specCtx.fillText('NO INPUT', w / 2, hh / 2);
+                return;
+            }
+            const bars = 64;
+            const barW = w / bars;
+            const data = state.freqData;
+            const step = Math.floor(data.length / bars);
+            for (let i = 0; i < bars; i++) {
+                const val = data[i * step] / 255;
+                const barH = val * hh * 0.85;
+                const t = Math.min(val * 2, 1);
+                specCtx.fillStyle = `rgba(${Math.floor(40 + 60 * t)}, ${Math.floor(100 + 49 * t)}, ${Math.floor(200 + 37 * t)}, ${0.3 + t * 0.5})`;
+                specCtx.fillRect(i * barW, hh - barH, barW - 1, barH);
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════
+        //  PARTICLE RENDERING — Klein / Cornflower palette
+        // ═══════════════════════════════════════════════════════
+        const vertexShader = `
+            attribute float aHeight;
+            varying float vHeight;
+            uniform float uSize;
+            void main() {
+                vHeight = aHeight;
+                vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+                float hFactor = 0.7 + smoothstep(-0.03, 0.08, aHeight) * 0.8;
+                gl_PointSize = uSize * hFactor;
+                gl_Position = projectionMatrix * mvPos;
+            }
+        `;
+        const fragmentShader = `
+            varying float vHeight;
+            uniform vec3 uDeepColor;
+            uniform vec3 uRestColor;
+            uniform vec3 uCrestColor;
+            uniform vec3 uFoamColor;
+            void main() {
+                float d = length(gl_PointCoord - vec2(0.5));
+                if (d > 0.5) discard;
+                float alpha = smoothstep(0.5, 0.08, d);
+
+                float crest  = smoothstep(0.0,  0.06, vHeight);
+                float trough = smoothstep(0.0, -0.05, vHeight);
+                float foam   = smoothstep(0.06, 0.12, vHeight);
+
+                vec3 col = uRestColor;
+                col = mix(col, uCrestColor, crest);
+                col = mix(col, uDeepColor, trough);
+                col = mix(col, uFoamColor, foam * 0.5);
+
+                gl_FragColor = vec4(col, alpha * 0.88);
+            }
+        `;
+
+        const renderPositions = new Float32Array(N * 3);
+        const renderHeights = new Float32Array(N);
+
+        for (let i = 0; i < N; i++) {
+            renderPositions[i * 3] = gridX[i];
+            renderPositions[i * 3 + 1] = 0;
+            renderPositions[i * 3 + 2] = gridZ[i];
+        }
+
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(renderPositions, 3));
+        geo.setAttribute('aHeight', new THREE.BufferAttribute(renderHeights, 1));
+
+        const mat = new THREE.ShaderMaterial({
+            vertexShader, fragmentShader,
+            uniforms: {
+                uSize: { value: CONFIG.particleSize * Math.min(devicePixelRatio, 1.5) },
+                // Klein International Blue (#002FA7)
+                uRestColor:  { value: new THREE.Color(0.0, 0.184, 0.655) },
+                // Cornflower Blue (#6495ED)
+                uCrestColor: { value: new THREE.Color(0.392, 0.584, 0.929) },
+                // Deep trough — darker than Klein
+                uDeepColor:  { value: new THREE.Color(0.0, 0.06, 0.30) },
+                // Foam highlights — bright blue-white
+                uFoamColor:  { value: new THREE.Color(0.6, 0.75, 1.0) },
+            },
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            depthTest: false,
+        });
+
+        const points = new THREE.Points(geo, mat);
+        scene.add(points);
+
+        document.getElementById('info-count').textContent = N;
+
+        // ═══════════════════════════════════════════════════════
+        //  MOUSE / TOUCH — raycast to XZ, convert to grid coords
+        // ═══════════════════════════════════════════════════════
+        const raycaster = new THREE.Raycaster();
+        const mouseNDC = new THREE.Vector2();
+        const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+        const hitPoint = new THREE.Vector3();
+
+        function updateMouse3D(cx, cy) {
+            mouseNDC.x = (cx / innerWidth) * 2 - 1;
+            mouseNDC.y = -(cy / innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouseNDC, camera);
+            if (raycaster.ray.intersectPlane(groundPlane, hitPoint)) {
+                state.mouseCol = Math.round((hitPoint.x + halfW) / CONFIG.spacing);
+                state.mouseRow = Math.round((hitPoint.z + halfD) / CONFIG.spacing);
+            }
+        }
+
+        canvas.addEventListener('mousedown', e => { state.mouseDown = true; updateMouse3D(e.clientX, e.clientY); });
+        canvas.addEventListener('mousemove', e => { if (state.mouseDown) updateMouse3D(e.clientX, e.clientY); });
+        canvas.addEventListener('mouseup', () => state.mouseDown = false);
+        canvas.addEventListener('mouseleave', () => state.mouseDown = false);
+        canvas.addEventListener('touchstart', e => {
+            state.mouseDown = true;
+            updateMouse3D(e.touches[0].clientX, e.touches[0].clientY);
+        }, { passive: true });
+        canvas.addEventListener('touchmove', e => {
+            updateMouse3D(e.touches[0].clientX, e.touches[0].clientY);
+        }, { passive: true });
+        canvas.addEventListener('touchend', () => state.mouseDown = false);
+
+        // ═══════════════════════════════════════════════════════
+        //  ANIMATION LOOP
+        // ═══════════════════════════════════════════════════════
+        const clock = new THREE.Clock();
+        let frameCount = 0;
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = clock.getElapsedTime();
+            const blow = state.blowIntensity;
+
+            detectBlow();
+            if (frameCount % 3 === 0) drawSpectrum();
+
+            if (state.hasMic) {
+                if (blow > 0.05) {
+                    statusEl.className = 'st-active';
+                    statusEl.textContent = 'Blow Detected';
+                } else {
+                    statusEl.className = 'st-ready';
+                    statusEl.textContent = 'Listening';
+                }
+            }
+            levelFill.style.width = (blow * 100) + '%';
+
+            // Blow → create large circular Gaussian ripple
+            rippleCooldown--;
+            if (blow > 0.02 && rippleCooldown <= 0) {
+                const cx = Math.floor(cols / 2) + (Math.random() - 0.5) * 16;
+                const cy = Math.floor(rows / 2) + (Math.random() - 0.5) * 12;
+                const radius = CONFIG.rippleRadius + blow * CONFIG.rippleRadiusBlow;
+                const amplitude = blow * CONFIG.rippleAmplitude;
+                createRipple(cy, cx, radius, amplitude);
+                rippleCooldown = Math.max(8, Math.floor(CONFIG.rippleInterval * (1 - blow * 0.5)));
+            }
+
+            // Mouse → create ripple at touch point
+            mouseCooldown--;
+            if (state.mouseDown && mouseCooldown <= 0) {
+                const mr = state.mouseRow, mc = state.mouseCol;
+                if (mr > 1 && mr < rows - 2 && mc > 1 && mc < cols - 2) {
+                    createRipple(mr, mc, CONFIG.mouseRadius, CONFIG.mouseAmplitude);
+                    mouseCooldown = CONFIG.mouseCooldown;
+                }
+            }
+
+            // Run CFD wave simulation
+            simulate();
+
+            // Update render buffers
+            let maxH = 0;
+            for (let i = 0; i < N; i++) {
+                renderPositions[i * 3 + 1] = bufA[i];
+                renderHeights[i] = bufA[i];
+                const ah = Math.abs(bufA[i]);
+                if (ah > maxH) maxH = ah;
+            }
+            geo.attributes.position.needsUpdate = true;
+            geo.attributes.aHeight.needsUpdate = true;
+
+            if (frameCount % 10 === 0) {
+                document.getElementById('info-height').textContent = maxH.toFixed(4);
+                document.getElementById('info-floor').textContent = state.noiseFloor.toFixed(1);
+            }
+
+            composer.render();
+            drawOverlay();
+            frameCount++;
+        }
+        animate();
+
+        // ═══════════════════════════════════════════════════════
+        //  OVERLAY — POSTER_SYSTEM metadata labels
+        // ═══════════════════════════════════════════════════════
+        function drawOverlay() {
+            overlayCtx.clearRect(0, 0, POSTER_W, POSTER_H);
+            if (overlayHidden) return;
+            if (window.POSTER_SYSTEM) {
+                POSTER_SYSTEM.drawOverlay(overlayCtx, {
+                    experimentId: '03',
+                    seriesName: 'BREATH',
+                    topRight: 'BLOW · ' + state.blowIntensity.toFixed(2),
+                    bottomRight: 'MIC · ' + (state.hasMic ? 'LIVE' : 'OFF'),
+                    verticalContent: 'WAVE · ' + state.noiseFloor.toFixed(0),
+                    invert: true,
+                });
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════
+        //  KEYBOARD — H (overlay) + S (composite PNG)
+        // ═══════════════════════════════════════════════════════
+        function saveComposite() {
+            const prev = overlayHidden;
+            overlayHidden = false;
+            composer.render();
+            drawOverlay();
+
+            const out = document.createElement('canvas');
+            out.width = POSTER_W;
+            out.height = POSTER_H;
+            const outCtx = out.getContext('2d');
+            outCtx.drawImage(renderer.domElement, 0, 0);
+            outCtx.drawImage(overlayCanvas, 0, 0);
+
+            out.toBlob((blob) => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'breath.png';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }, 'image/png');
+
+            overlayHidden = prev;
+        }
+
+        window.addEventListener('keydown', (e) => {
+            const a = document.activeElement;
+            if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) return;
+            if (e.key === 'h' || e.key === 'H') {
+                overlayHidden = !overlayHidden;
+                e.preventDefault();
+            } else if (e.key === 's' || e.key === 'S') {
+                saveComposite();
+                e.preventDefault();
+            }
+        });
+
+        // ═══════════════════════════════════════════════════════
+        //  RESIZE
+        // ═══════════════════════════════════════════════════════
+        // Internal resolution stays fixed at 660×900; only the CSS
+        // size of #sketch changes as the viewport resizes.
+        window.addEventListener('resize', fitToViewport);
+
+        // ═══════════════════════════════════════════════════════
+        //  START
+        // ═══════════════════════════════════════════════════════
+        initAudio();
+    </script>
+</body>
+</html>

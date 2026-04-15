@@ -1,0 +1,1081 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Displace — Gesture-Reactive Typography</title>
+  <meta name="description" content="Hand gestures bend light across a portrait-ratio typographic poster. Pixel-level refraction driven by a gesture-controlled displacement field.">
+  <meta name="theme-color" content="#0A0A0A">
+
+  <!-- Anton — condensed bold display. IBM Plex Mono for poster overlay labels. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Anton&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <!-- P5.js -->
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+
+  <!-- Shared poster systems -->
+  <script src="poster-system.js"></script>
+  <script src="projection-mapping.js"></script>
+
+  <!-- MediaPipe hand tracking -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js" crossorigin="anonymous"></script>
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: #0A0A0A;
+      overflow: hidden;
+      font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+      color: #fff;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Poster stage — centered */
+    #stage {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #sketch {
+      box-shadow: 0 30px 120px rgba(0, 0, 0, 0.55);
+    }
+    #sketch canvas { display: block; }
+
+    /* UI panels (float above the stage) */
+    .ui-panel {
+      position: fixed;
+      z-index: 100;
+      pointer-events: none;
+    }
+    .ui-panel > * { pointer-events: auto; }
+
+    /* Back link */
+    .back {
+      position: fixed;
+      top: 22px;
+      left: 24px;
+      z-index: 110;
+      font-size: 9px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.25);
+      text-decoration: none;
+      transition: color 0.3s;
+    }
+    .back:hover { color: rgba(255, 255, 255, 0.6); }
+
+    /* Left panel — title + gestures */
+    #ui-left {
+      top: 60px;
+      left: 24px;
+      width: 210px;
+    }
+    .ui-title {
+      font-size: 28px;
+      font-weight: 700;
+      line-height: 1.0;
+      letter-spacing: -0.5px;
+      margin-bottom: 4px;
+    }
+    .ui-subtitle {
+      font-size: 9px;
+      font-weight: 400;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.3);
+      margin-bottom: 22px;
+    }
+    .ui-divider {
+      width: 100%;
+      height: 1px;
+      background: rgba(255, 255, 255, 0.1);
+      margin: 16px 0;
+    }
+    .ui-label {
+      font-size: 9px;
+      font-weight: 500;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.25);
+      margin-bottom: 10px;
+    }
+
+    /* Text input — underline style, violet focus accent */
+    #text-input {
+      width: 100%;
+      background: none;
+      border: none;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+      color: #fff;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 500;
+      letter-spacing: 2px;
+      padding: 4px 0 8px;
+      outline: none;
+      text-transform: uppercase;
+      transition: border-bottom-color 0.25s;
+      -webkit-appearance: none;
+      appearance: none;
+      border-radius: 0;
+    }
+    #text-input:focus { border-bottom-color: #C8C8D0; }
+    #text-input::placeholder { color: rgba(255, 255, 255, 0.12); }
+
+    .ui-help {
+      font-size: 8px;
+      font-weight: 400;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.18);
+      margin-top: 8px;
+      line-height: 1.5;
+    }
+
+    /* Gesture list */
+    .gesture-list {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+    .gesture-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 10px;
+      letter-spacing: 1.5px;
+      color: rgba(255, 255, 255, 0.32);
+      transition: color 0.2s;
+    }
+    .gesture-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.12);
+      transition: all 0.2s;
+      flex-shrink: 0;
+    }
+    .gesture-desc {
+      font-size: 8px;
+      color: rgba(255, 255, 255, 0.2);
+      margin-left: auto;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+    }
+    .gesture-item.active { color: #C8C8D0; }
+    .gesture-item.active .gesture-dot {
+      background: #C8C8D0;
+      box-shadow: 0 0 10px #C8C8D0;
+    }
+    .gesture-item.active .gesture-desc { color: rgba(200, 200, 208, 0.55); }
+
+    /* Right panel — hand tracking preview */
+    #ui-right {
+      top: 60px;
+      right: 24px;
+    }
+    #hand-canvas {
+      display: block;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.02);
+      width: 240px;
+      height: 180px;
+    }
+
+    /* Bottom bar — status + version */
+    #ui-bottom {
+      bottom: 22px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      font-size: 9px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+    }
+    #status {
+      color: rgba(255, 255, 255, 0.3);
+      padding: 5px 10px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    #status.st-loading { color: rgba(255,255,255,0.3); border-color: rgba(255,255,255,0.1); }
+    #status.st-ready { color: rgba(200, 200, 208, 0.8); border-color: rgba(200, 200, 208, 0.3); }
+    #status.st-active { color: #C8C8D0; border-color: rgba(200, 200, 208, 0.5); }
+    #status.st-error { color: rgba(255, 100, 100, 0.8); border-color: rgba(255, 100, 100, 0.3); }
+
+    #hud-keys {
+      color: rgba(255,255,255,0.22);
+      white-space: nowrap;
+    }
+    #hud-keys b {
+      color: rgba(255,255,255,0.45);
+      font-weight: 400;
+      margin-right: 2px;
+    }
+    #hud-keys .sep {
+      opacity: 0.35;
+      margin: 0 8px;
+    }
+
+    #version {
+      color: rgba(255,255,255,0.15);
+    }
+  </style>
+</head>
+<body>
+
+  <a href="index.html" class="back">&larr; Back</a>
+
+  <div id="stage">
+    <div id="sketch"></div>
+  </div>
+
+  <div id="ui-left" class="ui-panel">
+    <div class="ui-title">Displace</div>
+    <div class="ui-subtitle">Experiment 04 — Gesture Refraction</div>
+    <div class="ui-divider"></div>
+    <div class="ui-label">Text</div>
+    <input type="text" id="text-input" value="DON'T THINK TOO HARD"
+           placeholder="DON'T THINK TOO HARD" spellcheck="false"
+           autocomplete="off" maxlength="60">
+    <div class="ui-help">Each word → one line · use / for multi-word lines</div>
+    <div class="ui-divider"></div>
+    <div class="ui-label">Gestures</div>
+    <div class="gesture-list">
+      <div class="gesture-item" data-gesture="point">
+        <span class="gesture-dot"></span>Point <span class="gesture-desc">Pierce</span>
+      </div>
+      <div class="gesture-item" data-gesture="open">
+        <span class="gesture-dot"></span>Open <span class="gesture-desc">Push</span>
+      </div>
+      <div class="gesture-item" data-gesture="pinch">
+        <span class="gesture-dot"></span>Pinch <span class="gesture-desc">Pull</span>
+      </div>
+      <div class="gesture-item" data-gesture="peace">
+        <span class="gesture-dot"></span>Peace <span class="gesture-desc">Swirl</span>
+      </div>
+      <div class="gesture-item" data-gesture="grab">
+        <span class="gesture-dot"></span>Grab <span class="gesture-desc">Freeze</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="ui-right" class="ui-panel">
+    <div class="ui-label">Tracking</div>
+    <canvas id="hand-canvas" width="240" height="180"></canvas>
+  </div>
+
+  <div id="ui-bottom" class="ui-panel">
+    <div id="status" class="st-loading">Loading</div>
+    <div id="hud-keys">
+      <b>SPACE</b> Pause
+      <span class="sep">·</span>
+      <b>R</b> Re-roll
+      <span class="sep">·</span>
+      <b>H</b> Overlay
+      <span class="sep">·</span>
+      <b>P</b> Project
+      <span class="sep">·</span>
+      <b>S</b> Save
+    </div>
+    <div id="version">v1.0</div>
+  </div>
+
+  <video id="webcam" playsinline style="display:none"></video>
+
+  <script>
+  // =====================================================
+  // DISPLACE — Gesture-Reactive Typographic Refraction
+  // =====================================================
+  // Bold condensed type fills an 11:15 portrait canvas.
+  // Every destination pixel looks up its source through
+  // a 2D displacement field. The field is the sum of:
+  //
+  //   ambient(u, v, t)     — subtle noise drift (resting state)
+  // + gesture(u, v, hand)  — hand-driven impulse
+  //
+  // Gestures write into the field each frame — no velocity
+  // integration, no state carry-over: the hand's current
+  // pose directly shapes the warp. This keeps the feedback
+  // tight and legible.
+  //
+  // Pixel pipeline mirrors horizon.html: the clean
+  // composition is rasterized once into src, cached as a
+  // Uint32 view, and per-frame we write into workImg via
+  // bilinearly-sampled displacement lookups.
+  // =====================================================
+
+  // --- Stage geometry — 11:15 portrait (matches poster DNA) ---
+  const POSTER_W = 660;
+  const POSTER_H = 900;
+
+  // --- Composition — four lines of condensed display type ---
+  // Array contents are mutated in place when the user updates the text input,
+  // so layoutText() and drawSource() always see the current composition.
+  const LINES = ["DON'T", 'THINK', 'TOO', 'HARD'];
+  const DEFAULT_LINES = ["DON'T", 'THINK', 'TOO', 'HARD'];
+  const MAX_LINES = 6;
+
+  // --- Low-res displacement field ---
+  const FIELD_W = 50;
+  const FIELD_H = 68;
+
+  // --- Bayer ordered dither (4×4) ---
+  // Applied once to the cached source after font load, so the
+  // entire composition becomes a 1-bit bitmap that the refraction
+  // pass then warps. Zero per-frame cost.
+  //
+  //   0  8  2 10        0.5/16 * 255 ≈   8
+  //  12  4 14  6   →   23, 39, 55, 71, 87, 103, 119, 135,
+  //   3 11  1  9       151, 167, 183, 199, 215, 231, 247
+  //  15  7 13  5
+  //
+  // A source pixel's luminance is compared to the matching
+  // threshold (x&3, y&3). Above → white, below → black.
+  const BAYER_4 = [
+    0,  8,  2, 10,
+    12, 4, 14,  6,
+    3, 11,  1,  9,
+    15, 7, 13,  5,
+  ];
+  const BAYER_LUT = new Uint8Array(16);
+  for (let i = 0; i < 16; i++) {
+    BAYER_LUT[i] = ((BAYER_4[i] + 0.5) * 255 / 16) | 0;
+  }
+
+  // --- Refraction strength (max pixel displacement at field=1) ---
+  const REFRACT_STRENGTH = 110;
+
+  // --- Ambient noise (resting-state drift) ---
+  const AMB_FREQ_X  = 4.0;
+  const AMB_FREQ_Y  = 3.2;
+  const AMB_FREQ_X2 = 9.5;
+  const AMB_FREQ_Y2 = 7.5;
+  const AMB_DETAIL  = 0.42;
+  const AMB_TIME_X  = 0.010;
+  const AMB_TIME_Y  = 0.0075;
+  const AMB_SCALE   = 0.35;  // overall ambient amplitude (kept subtle)
+
+  // --- Gesture force tuning (in field units, normalized u/v) ---
+  const POINT_STRENGTH  = 14;
+  const POINT_RADIUS    = 0.11;
+  const OPEN_STRENGTH   = 9;
+  const OPEN_RADIUS     = 0.32;
+  const PINCH_STRENGTH  = 11;
+  const PINCH_RADIUS    = 0.24;
+  const PEACE_STRENGTH  = 12;
+  const PEACE_RADIUS    = 0.20;
+  const GRAB_RADIUS     = 0.32;
+
+  // --- Runtime state ---
+  let src;
+  // Two cached versions of the source image:
+  //   • smooth   — the raw grey composition, untouched
+  //   • dithered — 4-level Bayer dithered version
+  // The draw loop picks one each frame based on hand.present,
+  // making the dither a gesture-reactive material swap rather
+  // than an always-on post-effect.
+  let srcCached32_smooth;
+  let srcCached32_dithered;
+  let workImg;
+  let field;
+  let fontReady = false;
+  let fontSizes = [];
+  let yPositions = [];
+  let t = 0;
+  let paused = false;
+  // Overlay visibility — toggle with H. When hidden, PNG exports
+  // produce clean poster output (no labels) for projection mapping.
+  let overlayHidden = false;
+
+  // --- Hand-tracking state ---
+  const hand = {
+    present: false,
+    u: 0.5, v: 0.5,      // index fingertip in normalized poster space
+    pu: 0.5, pv: 0.5,    // pinch midpoint in normalized poster space
+    gesture: 'none',
+    prevGesture: 'none',
+    landmarks: null,
+  };
+
+  // =============================
+  // P5 Lifecycle
+  // =============================
+
+  function setup() {
+    const canvas = createCanvas(POSTER_W, POSTER_H);
+    canvas.parent('sketch');
+    pixelDensity(1);
+
+    src = createGraphics(POSTER_W, POSTER_H);
+    src.pixelDensity(1);
+
+    workImg = createImage(POSTER_W, POSTER_H);
+    workImg.loadPixels();
+
+    field = new Float32Array(FIELD_W * FIELD_H * 2);
+
+    fitToViewport();
+    window.addEventListener('resize', fitToViewport);
+
+    noiseSeed(Math.floor(Math.random() * 1e6) + 1);
+
+    // Wait for Anton to load before measuring text widths
+    const ready = (document.fonts && document.fonts.load)
+      ? document.fonts.load('96px Anton').catch(() => {})
+      : Promise.resolve();
+
+    ready.finally(() => {
+      fontReady = true;
+      layoutText();
+      drawSource();
+      rebuildSourceCaches();
+    });
+
+    initHandTracking();
+    drawHandSkeleton(null);
+    initTextInput();
+  }
+
+  // Fit canvas to the viewport while preserving 11:15 ratio.
+  function fitToViewport() {
+    const ratio = POSTER_W / POSTER_H;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let cw, ch;
+    if (vw / vh > ratio) {
+      ch = vh * 0.92;
+      cw = ch * ratio;
+    } else {
+      cw = vw * 0.90;
+      ch = cw / ratio;
+    }
+    const c = document.querySelector('#sketch canvas');
+    if (c) {
+      c.style.width = cw + 'px';
+      c.style.height = ch + 'px';
+    }
+  }
+
+  // Measure line widths and cache sizes + y positions.
+  function layoutText() {
+    const topMargin = POSTER_H * 0.05;
+    const botMargin = POSTER_H * 0.05;
+    const availH = POSTER_H - topMargin - botMargin;
+    const lineSlot = availH / LINES.length;
+
+    src.textFont('Anton');
+    src.textAlign(CENTER, CENTER);
+
+    const maxWidth = POSTER_W * 0.92;
+    fontSizes = [];
+    yPositions = [];
+
+    for (let i = 0; i < LINES.length; i++) {
+      src.textSize(400);
+      const measured = Math.max(src.textWidth(LINES[i]), 1);
+      const sizeByW = 400 * (maxWidth / measured);
+      const sizeByH = lineSlot * 1.45;
+      const size = Math.min(sizeByW, sizeByH);
+      fontSizes.push(size);
+      yPositions.push(topMargin + lineSlot * (i + 0.5));
+    }
+  }
+
+  // Rasterize the clean composition once — white type on near-black
+  // paper, with a soft grey vertical wash and a soft grey shadow
+  // halo around each letter. The grey values become visible dither
+  // patterns in the gesture-reactive dithered source (see
+  // rebuildSourceCaches) while staying smooth in the idle source.
+  function drawSource() {
+    src.noStroke();
+
+    // Near-black paper — leaves headroom for the grey wash to
+    // produce a visible dither range.
+    src.background(8, 8, 10);
+
+    // Soft grey vertical wash — brighter at top/bottom, fading to
+    // near-black through the middle. After 1-bit Bayer dither, the
+    // top/bottom bands become visibly dithered grey (~37% white
+    // dots) and the middle becomes near-solid black.
+    const ctx = src.drawingContext;
+    const grad = ctx.createLinearGradient(0, 0, 0, POSTER_H);
+    grad.addColorStop(0,    'rgba(180, 180, 186, 0.50)');
+    grad.addColorStop(0.5,  'rgba(30, 30, 34, 0.00)');
+    grad.addColorStop(1,    'rgba(180, 180, 186, 0.50)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, POSTER_W, POSTER_H);
+
+    src.textFont('Anton');
+    src.textAlign(CENTER, CENTER);
+
+    // Main type — white with a soft grey halo. After dither the
+    // halo becomes a dithered falloff around each letter — the
+    // classic halftone-glow look.
+    for (let i = 0; i < LINES.length; i++) {
+      src.textSize(fontSizes[i]);
+
+      // Soft grey outer bloom
+      ctx.shadowColor = 'rgba(220, 220, 226, 0.85)';
+      ctx.shadowBlur = 38;
+      src.fill(255);
+      src.text(LINES[i], POSTER_W / 2, yPositions[i]);
+
+      // Inner pure-white pass — crisps the core after the bloom lays down
+      ctx.shadowBlur = 0;
+      src.fill(255);
+      src.text(LINES[i], POSTER_W / 2, yPositions[i]);
+    }
+
+    // Corner registration marks — projection-mapping artifact aesthetic
+    ctx.shadowBlur = 0;
+    src.fill(255, 255, 255, 60);
+    const mark = 16;
+    const pad = 24;
+    // TL
+    src.rect(pad, pad, mark, 1);
+    src.rect(pad, pad, 1, mark);
+    // TR
+    src.rect(POSTER_W - pad - mark, pad, mark, 1);
+    src.rect(POSTER_W - pad - 1, pad, 1, mark);
+    // BL
+    src.rect(pad, POSTER_H - pad - 1, mark, 1);
+    src.rect(pad, POSTER_H - pad - mark, 1, mark);
+    // BR
+    src.rect(POSTER_W - pad - mark, POSTER_H - pad - 1, mark, 1);
+    src.rect(POSTER_W - pad - 1, POSTER_H - pad - mark, 1, mark);
+  }
+
+  // Rebuild both cached sources — smooth and 4-level Bayer dithered.
+  // Called once after font load and again whenever the user edits
+  // the text input. Zero per-frame cost — the draw loop just picks
+  // which source to sample from based on hand presence.
+  //
+  // Why 4-level instead of 1-bit?
+  //   With 1-bit output, adjacent pixels differ by the max (0 vs
+  //   255). When the refraction shifts sample positions even 1px
+  //   between frames, the output flickers violently — reads as
+  //   low FPS even though the framerate is unchanged. 4-level
+  //   caps adjacent-pixel deltas at 85, making the warp smooth
+  //   in motion while keeping a visible bitmap dither pattern.
+  function rebuildSourceCaches() {
+    if (!src) return;
+    src.loadPixels();
+
+    // --- Smooth source — untouched raw pixels ---
+    const smoothBytes = new Uint8ClampedArray(src.pixels);
+    srcCached32_smooth = new Uint32Array(smoothBytes.buffer);
+
+    // --- Dithered source — 4-level Bayer ordered dither ---
+    // Output tones: 0, 85, 170, 255
+    const ditheredBytes = new Uint8ClampedArray(src.pixels);
+    const ditheredView  = new Uint32Array(ditheredBytes.buffer);
+    const W = POSTER_W;
+    const H = POSTER_H;
+    for (let y = 0; y < H; y++) {
+      const yBase = y * W;
+      const yRow  = (y & 3) << 2;
+      for (let x = 0; x < W; x++) {
+        const val = ditheredView[yBase + x];
+        const r = val & 0xFF;
+        const g = (val >> 8) & 0xFF;
+        const b = (val >> 16) & 0xFF;
+        // Integer luminance: 0.30R + 0.59G + 0.11B
+        const lum = (r * 77 + g * 150 + b * 29) >> 8;
+        // Bayer threshold 0..255, shift into dither offset -42..+42
+        const thresh = BAYER_LUT[yRow | (x & 3)];
+        const offset = ((thresh - 128) * 85) >> 8;
+        let adj = lum + offset;
+        if (adj < 0) adj = 0;
+        else if (adj > 255) adj = 255;
+        // Quantize to 4 levels: 0, 85, 170, 255
+        const level = ((adj + 42) / 85) | 0;
+        const out = level * 85;
+        ditheredView[yBase + x] = 0xFF000000 | (out << 16) | (out << 8) | out;
+      }
+    }
+    srcCached32_dithered = ditheredView;
+  }
+
+  // =============================
+  // Text Input — live composition updates
+  // =============================
+
+  // Parse the raw input string into an array of line strings.
+  //
+  //   "TOUCH BENDS THE LIGHT"   → ["TOUCH", "BENDS", "THE", "LIGHT"]
+  //   "MAKE IT / BEND"          → ["MAKE IT", "BEND"]
+  //   "NO / CONTACT / IS CLEAN" → ["NO", "CONTACT", "IS CLEAN"]
+  //
+  // Using '/' as the line separator lets users compose multi-word lines
+  // without leaving the single input field. Empty input falls back to
+  // the default composition so the poster never disappears mid-edit.
+  function parseInputText(str) {
+    if (!str || !str.trim()) return DEFAULT_LINES.slice();
+    const s = str.trim().toUpperCase();
+    let parts;
+    if (s.indexOf('/') >= 0) {
+      parts = s.split('/').map(p => p.trim()).filter(p => p.length > 0);
+    } else {
+      parts = s.split(/\s+/).filter(p => p.length > 0);
+    }
+    if (parts.length === 0) return DEFAULT_LINES.slice();
+    return parts.slice(0, MAX_LINES);
+  }
+
+  // Mutate LINES in place, re-layout, re-rasterize, and re-cache the
+  // Uint32 source view. This is the full rebuild pipeline — everything
+  // downstream (draw's refraction pass) picks up the new composition
+  // automatically on the next frame.
+  function updateLines(newLines) {
+    LINES.length = 0;
+    for (let i = 0; i < newLines.length; i++) LINES.push(newLines[i]);
+
+    if (!fontReady || !src) return;
+    layoutText();
+    drawSource();
+    rebuildSourceCaches();
+  }
+
+  // Wire up the input field. Debounce keeps typing responsive —
+  // rebuilding the source is cheap but we still avoid thrashing
+  // drawSource() on every keystroke.
+  function initTextInput() {
+    const el = document.getElementById('text-input');
+    if (!el) return;
+    let timer = null;
+    el.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        updateLines(parseInputText(el.value));
+      }, 220);
+    });
+    // Commit immediately on Enter + release focus so the user can
+    // immediately use keyboard shortcuts (SPACE/R/S) again.
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        clearTimeout(timer);
+        updateLines(parseInputText(el.value));
+        el.blur();
+        e.preventDefault();
+      }
+    });
+  }
+
+  // =============================
+  // Field Computation
+  // =============================
+
+  function computeField() {
+    const tx = t * AMB_TIME_X;
+    const ty = t * AMB_TIME_Y;
+    const eps = 0.02;
+
+    const present = hand.present;
+    const g = hand.gesture;
+    const hu = hand.u;
+    const hv = hand.v;
+    const pu = hand.pu;
+    const pv = hand.pv;
+
+    for (let j = 0; j < FIELD_H; j++) {
+      const v = j / (FIELD_H - 1);
+      const ay1 = v * AMB_FREQ_Y  + ty;
+      const ay2 = v * AMB_FREQ_Y2 + ty * 1.7;
+
+      for (let i = 0; i < FIELD_W; i++) {
+        const u = i / (FIELD_W - 1);
+        const ax1 = u * AMB_FREQ_X  + tx;
+        const ax2 = u * AMB_FREQ_X2 + tx * 1.7 + 13.0;
+
+        // --- Ambient noise field (two octaves of gradient noise) ---
+        const n10 = noise(ax1, ay1);
+        const n11 = noise(ax1 + eps, ay1);
+        const n12 = noise(ax1, ay1 + eps);
+        const dx1 = ((n11 - n10) / eps) / 3;
+        const dy1 = ((n12 - n10) / eps) / 3;
+
+        const n20 = noise(ax2, ay2);
+        const n21 = noise(ax2 + eps, ay2);
+        const n22 = noise(ax2, ay2 + eps);
+        const dx2 = ((n21 - n20) / eps) / 3;
+        const dy2 = ((n22 - n20) / eps) / 3;
+
+        let dx = (dx1 + dx2 * AMB_DETAIL) * AMB_SCALE;
+        let dy = (dy1 + dy2 * AMB_DETAIL) * AMB_SCALE;
+
+        // --- Gesture impulse (added directly to the field) ---
+        if (present) {
+          const du = u - hu;
+          const dv = v - hv;
+          const d  = Math.sqrt(du * du + dv * dv);
+
+          if (g === 'point') {
+            // Tight fingertip impulse — sharp Gaussian falloff,
+            // push outward normalized by distance.
+            const r2 = POINT_RADIUS * POINT_RADIUS;
+            if (d < POINT_RADIUS * 2.0) {
+              const falloff = Math.exp(-(d * d) / (r2 * 0.35));
+              const inv = d > 0.0005 ? 1.0 / d : 0;
+              dx += du * inv * falloff * POINT_STRENGTH * 0.012;
+              dy += dv * inv * falloff * POINT_STRENGTH * 0.012;
+            }
+          } else if (g === 'open') {
+            // Broad radial push — not normalized, so the force
+            // grows linearly with distance inside the radius then
+            // smoothly decays. Feels like pressing on a soft
+            // membrane with the full palm.
+            if (d < OPEN_RADIUS) {
+              const s = 1.0 - d / OPEN_RADIUS;
+              const k = s * s;
+              dx += du * k * OPEN_STRENGTH;
+              dy += dv * k * OPEN_STRENGTH;
+            }
+          } else if (g === 'pinch') {
+            // Pull toward pinch midpoint — inverse of 'open' but
+            // centered on the pinch point (which differs from hu/hv).
+            const pdu = pu - u;
+            const pdv = pv - v;
+            const pd  = Math.sqrt(pdu * pdu + pdv * pdv);
+            if (pd < PINCH_RADIUS) {
+              const s = 1.0 - pd / PINCH_RADIUS;
+              const k = s * s;
+              dx += pdu * k * PINCH_STRENGTH;
+              dy += pdv * k * PINCH_STRENGTH;
+            }
+          } else if (g === 'peace') {
+            // Tangential (perpendicular to radial) — a vortex.
+            if (d < PEACE_RADIUS) {
+              const s = 1.0 - d / PEACE_RADIUS;
+              const k = s * s;
+              dx += -dv * k * PEACE_STRENGTH;
+              dy +=  du * k * PEACE_STRENGTH;
+            }
+          } else if (g === 'grab') {
+            // Dampen the field near the fist — everything goes
+            // quiet. Reads as "holding the light still".
+            if (d < GRAB_RADIUS) {
+              const s = 1.0 - d / GRAB_RADIUS;
+              const damp = 1.0 - s * 0.92;
+              dx *= damp;
+              dy *= damp;
+            }
+          }
+        }
+
+        const idx = (j * FIELD_W + i) * 2;
+        field[idx]     = dx;
+        field[idx + 1] = dy;
+      }
+    }
+  }
+
+  // =============================
+  // Refraction Pass
+  // =============================
+
+  function draw() {
+    if (!fontReady || !srcCached32_smooth) {
+      background(10);
+      fill(255, 40);
+      noStroke();
+      textAlign(CENTER, CENTER);
+      textFont('monospace');
+      textSize(9);
+      text('·  LOADING  ·', width / 2, height / 2);
+      return;
+    }
+
+    computeField();
+
+    const dst32 = new Uint32Array(workImg.pixels.buffer);
+    // Pick the source based on hand presence:
+    //   hand absent  → smooth grey composition (fast, calm)
+    //   hand present → 4-level Bayer dithered bitmap (reactive)
+    // Zero per-pixel cost — just a different Uint32Array alias.
+    const src32 = hand.present ? srcCached32_dithered : srcCached32_smooth;
+
+    const W = POSTER_W;
+    const H = POSTER_H;
+    const FW = FIELD_W;
+    const FH = FIELD_H;
+    const FW1 = FW - 1;
+    const FH1 = FH - 1;
+    const fxScale = FW1 / (W - 1);
+    const fyScale = FH1 / (H - 1);
+
+    for (let y = 0; y < H; y++) {
+      const fy = y * fyScale;
+      const iy = fy | 0;
+      const fracY = fy - iy;
+      const invFracY = 1 - fracY;
+      const iyNext = iy < FH1 ? iy + 1 : iy;
+      const rowA = iy * FW * 2;
+      const rowB = iyNext * FW * 2;
+
+      const yBaseDst = y * W;
+
+      for (let x = 0; x < W; x++) {
+        const fx = x * fxScale;
+        const ix = fx | 0;
+        const fracX = fx - ix;
+        const invFracX = 1 - fracX;
+        const ixNext = ix < FW1 ? ix + 1 : ix;
+
+        const fxA = ix << 1;
+        const fxB = ixNext << 1;
+
+        const wAA = invFracX * invFracY;
+        const wAB = fracX    * invFracY;
+        const wBA = invFracX * fracY;
+        const wBB = fracX    * fracY;
+
+        const dx = (field[rowA + fxA]     * wAA +
+                    field[rowA + fxB]     * wAB +
+                    field[rowB + fxA]     * wBA +
+                    field[rowB + fxB]     * wBB) * REFRACT_STRENGTH;
+        const dy = (field[rowA + fxA + 1] * wAA +
+                    field[rowA + fxB + 1] * wAB +
+                    field[rowB + fxA + 1] * wBA +
+                    field[rowB + fxB + 1] * wBB) * REFRACT_STRENGTH;
+
+        let sx = (x + dx) | 0;
+        let sy = (y + dy) | 0;
+
+        if (sx < 0) sx = 0;
+        else if (sx >= W) sx = W - 1;
+        if (sy < 0) sy = 0;
+        else if (sy >= H) sy = H - 1;
+
+        dst32[yBaseDst + x] = src32[sy * W + sx];
+      }
+    }
+
+    workImg.updatePixels();
+    image(workImg, 0, 0);
+
+    // --- Poster series metadata overlay ---
+    // Drawn after the refracted image so the labels sit on top of
+    // the composition. `invert: true` gives white-on-black text so
+    // the labels read against the dark void canvas. `hidden` is
+    // toggled by the H key for clean PNG exports.
+    if (window.POSTER_SYSTEM) {
+      POSTER_SYSTEM.drawOverlay(drawingContext, {
+        experimentId: '04',
+        seriesName: 'DISPLACE',
+        topRight: 'REFRACT · ' + REFRACT_STRENGTH,
+        bottomRight: 'GESTURE · ' + (hand.present ? hand.gesture.toUpperCase() : 'IDLE'),
+        verticalContent: LINES.join(' / '),
+        invert: true,
+        hidden: overlayHidden,
+      });
+    }
+
+    if (!paused) t += 1;
+  }
+
+  // =============================
+  // Input
+  // =============================
+
+  function keyPressed() {
+    // Let the text input own the keyboard when it's focused — otherwise
+    // typing "R" reseeds noise, "S" triggers a PNG save, etc.
+    const a = document.activeElement;
+    if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) return;
+
+    if (key === ' ') { paused = !paused; return false; }
+    if (key === 'r' || key === 'R') {
+      noiseSeed(Math.floor(Math.random() * 1e6) + 1);
+      return false;
+    }
+    if (key === 'h' || key === 'H') {
+      overlayHidden = !overlayHidden;
+      return false;
+    }
+    if (key === 's' || key === 'S') {
+      // Force the overlay visible for the saved frame so every
+      // exported poster carries its identity tags (experiment ID,
+      // series, text, gesture). Restore the user's H-toggle state
+      // afterward so interactive preview is unaffected.
+      const prev = overlayHidden;
+      overlayHidden = false;
+      redraw();
+      saveCanvas('displace', 'png');
+      overlayHidden = prev;
+      return false;
+    }
+  }
+
+  // =============================
+  // Hand Tracking (MediaPipe)
+  // =============================
+
+  // MediaPipe hand landmark connections for skeleton drawing
+  const HAND_CONNECTIONS = [
+    [0,1],[1,2],[2,3],[3,4],
+    [0,5],[5,6],[6,7],[7,8],
+    [0,9],[9,10],[10,11],[11,12],
+    [0,13],[13,14],[14,15],[15,16],
+    [0,17],[17,18],[18,19],[19,20],
+    [5,9],[9,13],[13,17],
+  ];
+  const HAND_TIPS = new Set([4, 8, 12, 16, 20]);
+  const handCanvas = document.getElementById('hand-canvas');
+  const handCtx = handCanvas.getContext('2d');
+
+  function initHandTracking() {
+    if (typeof Hands === 'undefined' || typeof Camera === 'undefined') {
+      setStatus('error', 'No MP');
+      return;
+    }
+    const videoEl = document.getElementById('webcam');
+
+    const hands = new Hands({
+      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${f}`,
+    });
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.5,
+    });
+
+    hands.onResults(results => {
+      const lm = results.multiHandLandmarks && results.multiHandLandmarks[0];
+      if (lm) {
+        hand.landmarks = lm;
+        processHand(lm);
+        drawHandSkeleton(lm);
+        setStatus('active', 'Tracking');
+      } else {
+        hand.landmarks = null;
+        hand.present = false;
+        hand.prevGesture = hand.gesture;
+        hand.gesture = 'none';
+        updateGestureUI('none');
+        drawHandSkeleton(null);
+        setStatus('ready', 'Ready');
+      }
+    });
+
+    const cam = new Camera(videoEl, {
+      onFrame: async () => { await hands.send({ image: videoEl }); },
+      width: 320,
+      height: 240,
+    });
+    cam.start().then(() => {
+      setStatus('ready', 'Ready');
+    }).catch(() => {
+      setStatus('error', 'No Camera');
+    });
+  }
+
+  // Reduce 21 landmarks to a single (u, v, gesture, pinch) reading in
+  // normalized poster space. MediaPipe's x is camera-space: we mirror
+  // on x so right-handed gestures move the same way on screen.
+  function processHand(lm) {
+    // Index fingertip (8) — the hand's "cursor"
+    const iu = 1 - lm[8].x;   // mirror for selfie
+    const iv = lm[8].y;
+
+    // Thumb tip (4) — used with index for pinch midpoint
+    const tu = 1 - lm[4].x;
+    const tv = lm[4].y;
+
+    // Pinch distance (3D, since z tracks depth ordering)
+    const pinchDist = Math.sqrt(
+      (lm[4].x - lm[8].x) ** 2 +
+      (lm[4].y - lm[8].y) ** 2 +
+      (lm[4].z - lm[8].z) ** 2
+    );
+
+    // Which fingers are "extended"? PIP-joint-above-tip heuristic.
+    const indexUp  = lm[8].y  < lm[6].y;
+    const middleUp = lm[12].y < lm[10].y;
+    const ringUp   = lm[16].y < lm[14].y;
+    const pinkyUp  = lm[20].y < lm[18].y;
+    const extended = [indexUp, middleUp, ringUp, pinkyUp].filter(Boolean).length;
+
+    let g;
+    if (pinchDist < 0.10) g = 'pinch';
+    else if (extended === 1 && indexUp) g = 'point';
+    else if (extended === 2 && indexUp && middleUp) g = 'peace';
+    else if (extended >= 3) g = 'open';
+    else if (extended <= 1) g = 'grab';
+    else g = 'none';
+
+    // Smoothed fingertip position — the index tip is the primary
+    // interaction point for all gestures except pinch.
+    hand.prevGesture = hand.gesture;
+    hand.present = true;
+    hand.u = lerpN(hand.u, iu, 0.35);
+    hand.v = lerpN(hand.v, iv, 0.35);
+    hand.pu = lerpN(hand.pu, (iu + tu) / 2, 0.35);
+    hand.pv = lerpN(hand.pv, (iv + tv) / 2, 0.35);
+    hand.gesture = g;
+
+    updateGestureUI(g);
+  }
+
+  function lerpN(a, b, k) { return a + (b - a) * k; }
+
+  // Hand skeleton — mirrored for selfie view so the user's hand
+  // visually matches what's happening on the poster.
+  function drawHandSkeleton(lm) {
+    const w = handCanvas.width;
+    const h = handCanvas.height;
+    handCtx.clearRect(0, 0, w, h);
+
+    if (!lm) {
+      handCtx.fillStyle = 'rgba(255,255,255,0.08)';
+      handCtx.font = '10px Helvetica';
+      handCtx.textAlign = 'center';
+      handCtx.fillText('NO INPUT', w / 2, h / 2);
+      return;
+    }
+
+    // Bones
+    handCtx.strokeStyle = 'rgba(255,255,255,0.22)';
+    handCtx.lineWidth = 1;
+    for (const [a, b] of HAND_CONNECTIONS) {
+      handCtx.beginPath();
+      handCtx.moveTo((1 - lm[a].x) * w, lm[a].y * h);
+      handCtx.lineTo((1 - lm[b].x) * w, lm[b].y * h);
+      handCtx.stroke();
+    }
+
+    // Joints
+    for (let i = 0; i < lm.length; i++) {
+      handCtx.beginPath();
+      handCtx.arc((1 - lm[i].x) * w, lm[i].y * h, HAND_TIPS.has(i) ? 3 : 1.5, 0, Math.PI * 2);
+      handCtx.fillStyle = HAND_TIPS.has(i) ? '#C8C8D0' : 'rgba(255,255,255,0.55)';
+      handCtx.fill();
+    }
+  }
+
+  function updateGestureUI(g) {
+    document.querySelectorAll('.gesture-item').forEach(el => {
+      el.classList.toggle('active', el.dataset.gesture === g);
+    });
+  }
+
+  function setStatus(cls, text) {
+    const el = document.getElementById('status');
+    if (!el) return;
+    el.className = 'st-' + cls;
+    el.textContent = text;
+  }
+  </script>
+
+</body>
+</html>

@@ -1,0 +1,1181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bitmap — Generative Grid Typography</title>
+  <meta name="description" content="Gesture-reactive bitmap poster — monumental display letters constructed from an 11×15 grid of halftone, wedge, and circle tiles. Swiss rigor + punk bitmap.">
+  <meta name="theme-color" content="#0A0A0A">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Anton&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+  <!-- Shared poster systems -->
+  <script src="poster-system.js"></script>
+  <script src="projection-mapping.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js" crossorigin="anonymous"></script>
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: #0A0A0A;
+      overflow: hidden;
+      font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+      color: #fff;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    #stage {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #sketch {
+      box-shadow: 0 30px 120px rgba(0, 0, 0, 0.65);
+    }
+    #sketch canvas { display: block; }
+
+    .ui-panel {
+      position: fixed;
+      z-index: 100;
+      pointer-events: none;
+    }
+    .ui-panel > * { pointer-events: auto; }
+
+    .back {
+      position: fixed;
+      top: 22px;
+      left: 24px;
+      z-index: 110;
+      font-size: 9px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.25);
+      text-decoration: none;
+      transition: color 0.3s;
+    }
+    .back:hover { color: rgba(255, 255, 255, 0.6); }
+
+    #ui-left {
+      top: 60px;
+      left: 24px;
+      width: 210px;
+    }
+    .ui-title {
+      font-size: 28px;
+      font-weight: 700;
+      line-height: 1.0;
+      letter-spacing: -0.5px;
+      margin-bottom: 4px;
+    }
+    .ui-subtitle {
+      font-size: 9px;
+      font-weight: 400;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.3);
+      margin-bottom: 22px;
+    }
+    .ui-divider {
+      width: 100%;
+      height: 1px;
+      background: rgba(255, 255, 255, 0.1);
+      margin: 16px 0;
+    }
+    .ui-label {
+      font-size: 9px;
+      font-weight: 500;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.25);
+      margin-bottom: 10px;
+    }
+
+    /* Text input — underline style, white focus accent (matches B/W palette) */
+    #text-input {
+      width: 100%;
+      background: none;
+      border: none;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+      color: #fff;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 500;
+      letter-spacing: 2px;
+      padding: 4px 0 8px;
+      outline: none;
+      text-transform: uppercase;
+      transition: border-bottom-color 0.25s;
+      -webkit-appearance: none;
+      appearance: none;
+      border-radius: 0;
+    }
+    #text-input:focus { border-bottom-color: rgba(255, 255, 255, 0.8); }
+    #text-input::placeholder { color: rgba(255, 255, 255, 0.12); }
+
+    .ui-help {
+      font-size: 8px;
+      font-weight: 400;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.18);
+      margin-top: 8px;
+      line-height: 1.5;
+    }
+
+    .gesture-list {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+    .gesture-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 10px;
+      letter-spacing: 1.5px;
+      color: rgba(255, 255, 255, 0.32);
+      transition: color 0.2s;
+    }
+    .gesture-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.12);
+      transition: all 0.2s;
+      flex-shrink: 0;
+    }
+    .gesture-desc {
+      font-size: 8px;
+      color: rgba(255, 255, 255, 0.2);
+      margin-left: auto;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+    }
+    .gesture-item.active { color: #fff; }
+    .gesture-item.active .gesture-dot {
+      background: #fff;
+      box-shadow: 0 0 10px rgba(255,255,255,0.5);
+    }
+    .gesture-item.active .gesture-desc { color: rgba(255,255,255,0.5); }
+
+    #ui-right {
+      top: 60px;
+      right: 24px;
+    }
+    #hand-canvas {
+      display: block;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.02);
+      width: 240px;
+      height: 180px;
+    }
+
+    #ui-bottom {
+      bottom: 22px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      font-size: 9px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+    }
+    #status {
+      color: rgba(255, 255, 255, 0.3);
+      padding: 5px 10px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    #status.st-loading { color: rgba(255,255,255,0.3); border-color: rgba(255,255,255,0.1); }
+    #status.st-ready { color: rgba(255, 255, 255, 0.6); border-color: rgba(255, 255, 255, 0.3); }
+    #status.st-active { color: #fff; border-color: rgba(255, 255, 255, 0.6); }
+    #status.st-error { color: rgba(255, 100, 100, 0.8); border-color: rgba(255, 100, 100, 0.3); }
+
+    #hud-keys {
+      color: rgba(255,255,255,0.22);
+      white-space: nowrap;
+    }
+    #hud-keys b {
+      color: rgba(255,255,255,0.45);
+      font-weight: 400;
+      margin-right: 2px;
+    }
+    #hud-keys .sep {
+      opacity: 0.35;
+      margin: 0 8px;
+    }
+    #version {
+      color: rgba(255,255,255,0.15);
+    }
+  </style>
+</head>
+<body>
+
+  <a href="index.html" class="back">&larr; Back</a>
+
+  <div id="stage">
+    <div id="sketch"></div>
+  </div>
+
+  <div id="ui-left" class="ui-panel">
+    <div class="ui-title">Bitmap</div>
+    <div class="ui-subtitle">Experiment 05 — Grid Typography</div>
+    <div class="ui-divider"></div>
+    <div class="ui-label">Text</div>
+    <input type="text" id="text-input" value="MOTION"
+           placeholder="MOTION" spellcheck="false"
+           autocomplete="off" maxlength="40">
+    <div class="ui-help">Full text renders on load · / for multi-line</div>
+    <div class="ui-divider"></div>
+    <div class="ui-label">Gestures</div>
+    <div class="gesture-list">
+      <div class="gesture-item" data-gesture="point">
+        <span class="gesture-dot"></span>Point <span class="gesture-desc">Pierce</span>
+      </div>
+      <div class="gesture-item" data-gesture="open">
+        <span class="gesture-dot"></span>Open <span class="gesture-desc">Flashlight</span>
+      </div>
+      <div class="gesture-item" data-gesture="pinch">
+        <span class="gesture-dot"></span>Pinch <span class="gesture-desc">Scale</span>
+      </div>
+      <div class="gesture-item" data-gesture="peace">
+        <span class="gesture-dot"></span>Peace <span class="gesture-desc">Palette</span>
+      </div>
+      <div class="gesture-item" data-gesture="grab">
+        <span class="gesture-dot"></span>Grab <span class="gesture-desc">Invert</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="ui-right" class="ui-panel">
+    <div class="ui-label">Tracking</div>
+    <canvas id="hand-canvas" width="240" height="180"></canvas>
+  </div>
+
+  <div id="ui-bottom" class="ui-panel">
+    <div id="status" class="st-loading">Loading</div>
+    <div id="hud-keys">
+      <b>S</b> Save
+      <span class="sep">·</span>
+      <b>H</b> Overlay
+      <span class="sep">·</span>
+      <b>P</b> Project
+      <span class="sep">·</span>
+      <b>R</b> Reshuffle
+      <span class="sep">·</span>
+      <b>[ ]</b> Palette
+    </div>
+    <div id="version">v1.0</div>
+  </div>
+
+  <video id="webcam" playsinline style="display:none"></video>
+
+  <script>
+  // =====================================================
+  // BITMAP — Generative Grid Typography
+  // =====================================================
+  // An 11×15 grid of 60px cells constructs monumental
+  // display letters from a tile library. Each cell samples
+  // the four corners of a pre-rendered letter mask and
+  // picks a tile based on the corner bit pattern:
+  //
+  //   0000  all out → decorative paper tile (noise-picked)
+  //   0001-1000     → small corner wedge
+  //   0011/0101/... → half-cell fills
+  //   0110/1001     → diagonal split (opposite corners)
+  //   0111-1110     → big corner wedges (3 in, 1 out)
+  //   1111  all in  → solid (or filled-circle variant)
+  //
+  // The letter auto-advances every 1.6s. Gestures overlay
+  // live effects on the per-cell rendering:
+  //
+  //   Point → sparkle at fingertip (random tile override)
+  //   Open  → flashlight invert in broad radius
+  //   Pinch → freezes the letter cycle
+  //   Peace → swaps the decorative tile palette family
+  //   Grab  → full-canvas invert
+  //
+  // Pure B/W to honor the Swiss + punk reference.
+  // =====================================================
+
+  // --- Stage geometry — exact 11:15 portrait ---
+  const POSTER_W = 660;
+  const POSTER_H = 900;
+  const GRID_W = 11;
+  const GRID_H = 15;
+  const CELL = POSTER_W / GRID_W; // = 60
+
+  // --- Tile IDs ---
+  const T = {
+    WHITE: 0,
+    BLACK: 1,
+    CIRCLE_FILLED: 2,
+    CIRCLE_HOLLOW: 3,
+    HALFTONE_LIGHT: 4,
+    HALFTONE_HEAVY: 5,
+    STRIPE_V: 6,
+    STRIPE_H: 7,
+    WEDGE_TL: 8,
+    WEDGE_TR: 9,
+    WEDGE_BL: 10,
+    WEDGE_BR: 11,
+    HALF_T: 12,
+    HALF_B: 13,
+    HALF_L: 14,
+    HALF_R: 15,
+    BIG_TL: 16, // 3 corners in, TL missing
+    BIG_TR: 17,
+    BIG_BL: 18,
+    BIG_BR: 19,
+    DIAG_TLBR: 20, // TL + BR corners only (opposite)
+    DIAG_TRBL: 21, // TR + BL corners only
+    // 4×4 Bayer-ordered dither at three densities
+    DITHER_25: 22, // 4/16 filled (light)
+    DITHER_50: 23, // 8/16 filled (checker)
+    DITHER_75: 24, // 12/16 filled (heavy)
+  };
+
+  // Precomputed Bayer-ordered positions for dither tiles. Each entry is
+  // a [gx, gy] pair in a 4×4 sub-grid. Derived from the canonical
+  // Bayer-4 matrix — 25% threshold<4, 50% <8, 75% <12.
+  const DITHER_POS_25 = [
+    [0,0],[2,0],[0,2],[2,2],
+  ];
+  const DITHER_POS_50 = [
+    [0,0],[2,0],[1,1],[3,1],[0,2],[2,2],[1,3],[3,3],
+  ];
+  const DITHER_POS_75 = [
+    [0,0],[1,0],[2,0],[3,0],
+    [1,1],[3,1],
+    [0,2],[1,2],[2,2],[3,2],
+    [1,3],[3,3],
+  ];
+
+  // --- Big quadrant circles — drawn on top of the text via XOR ---
+  // Four circles, one centered near each quadrant's middle, radius
+  // large enough to dominate the quadrant and overlap the center
+  // axes slightly. Cells inside a circle get their invert flag
+  // flipped — XOR with an even count returns them to normal, so
+  // overlap regions "cancel out" in a visually rich way.
+  const BIG_R = POSTER_W * 0.35;
+  const BIG_CIRCLES = [
+    { cx: POSTER_W * 0.28, cy: POSTER_H * 0.26 },
+    { cx: POSTER_W * 0.72, cy: POSTER_H * 0.26 },
+    { cx: POSTER_W * 0.28, cy: POSTER_H * 0.74 },
+    { cx: POSTER_W * 0.72, cy: POSTER_H * 0.74 },
+  ];
+  const BIG_R2 = BIG_R * BIG_R; // squared radius, used in hot loop
+
+  // Corner bit packing: TL=1, TR=2, BL=4, BR=8
+  // Maps 4-bit corner pattern → tile ID. 0 and 15 are
+  // handled separately (decorative vs filled).
+  const BITS_TO_TILE = {
+    1:  T.WEDGE_TL,
+    2:  T.WEDGE_TR,
+    4:  T.WEDGE_BL,
+    8:  T.WEDGE_BR,
+    3:  T.HALF_T,       // TL+TR
+    5:  T.HALF_L,       // TL+BL
+    10: T.HALF_R,       // TR+BR
+    12: T.HALF_B,       // BL+BR
+    6:  T.DIAG_TRBL,    // TR+BL
+    9:  T.DIAG_TLBR,    // TL+BR
+    7:  T.BIG_TL,       // TR+BL+BR (TL missing)
+    11: T.BIG_TR,       // TL+BL+BR (TR missing)
+    13: T.BIG_BL,       // TL+TR+BR (BL missing)
+    14: T.BIG_BR,       // TL+TR+BL (BR missing)
+  };
+
+  // --- Text state ---
+  // The entire composition is rasterized once into the mask. `lines`
+  // is an array of strings, one string per horizontal line of text.
+  // Text input supports a single line ("MOTION") or multi-line via
+  // `/` separator ("MO/TION"). Array is mutated in place.
+  const lines = ['MOTION'];
+  const DEFAULT_LINES = ['MOTION'];
+  const MAX_LINES = 6;
+
+  // --- Scale state — continuously driven by hand pinch distance ---
+  // currentScale lerps toward targetScale each frame. When the hand is
+  // absent, targetScale holds its last value, so the composition
+  // freezes the instant the hand leaves the frame.
+  let currentScale = 1.0;
+  let targetScale  = 1.0;
+  const MIN_SCALE = 0.25;
+  const MAX_SCALE = 1.55;
+  const PINCH_NEAR = 0.04; // thumb+index touching → MIN_SCALE
+  const PINCH_FAR  = 0.30; // thumb+index wide open → MAX_SCALE
+
+  // --- Runtime state ---
+  let mask;          // offscreen graphics holding the big letter
+  let maskPixels;    // cached pixel array (re-loaded only on re-render)
+  let fontReady = false;
+  let paletteIdx = 0;
+  const PALETTE_COUNT = 3;
+  // Overlay visibility — toggled by H. S (save) always hides for
+  // one frame so PNG exports are clean for projection mapping.
+  let overlayHidden = false;
+
+  // Mask cache — avoids re-rendering + loadPixels on frames where
+  // nothing has changed. Seed values are chosen so the first
+  // ensureMaskCurrent() call always triggers a real render.
+  let lastLinesKey = '';
+  let lastScale    = -1;
+
+  // --- Hand-tracking state ---
+  const hand = {
+    present: false,
+    u: 0.5, v: 0.5,
+    pu: 0.5, pv: 0.5,
+    gesture: 'none',
+    prevGesture: 'none',
+    pinchDist: 0.2, // raw thumb-index distance, updates each frame
+    landmarks: null,
+  };
+
+  // =============================
+  // P5 Lifecycle
+  // =============================
+
+  function setup() {
+    const canvas = createCanvas(POSTER_W, POSTER_H);
+    canvas.parent('sketch');
+    pixelDensity(1);
+
+    mask = createGraphics(POSTER_W, POSTER_H);
+    mask.pixelDensity(1);
+
+    fitToViewport();
+    window.addEventListener('resize', fitToViewport);
+
+    noiseSeed(Math.floor(Math.random() * 1e6) + 1);
+
+    const ready = (document.fonts && document.fonts.load)
+      ? document.fonts.load('96px Anton').catch(() => {})
+      : Promise.resolve();
+
+    ready.finally(() => {
+      fontReady = true;
+      // Mask is rendered by ensureMaskCurrent() on the first draw()
+    });
+
+    initHandTracking();
+    initTextInput();
+    drawHandSkeleton(null);
+  }
+
+  function fitToViewport() {
+    const ratio = POSTER_W / POSTER_H;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let cw, ch;
+    if (vw / vh > ratio) {
+      ch = vh * 0.92;
+      cw = ch * ratio;
+    } else {
+      cw = vw * 0.90;
+      ch = cw / ratio;
+    }
+    const c = document.querySelector('#sketch canvas');
+    if (c) {
+      c.style.width = cw + 'px';
+      c.style.height = ch + 'px';
+    }
+  }
+
+  // =============================
+  // Letter Mask
+  // =============================
+
+  // Render the full composition into the mask buffer at a given
+  // scale. Each element of `linesArr` is one horizontal line of
+  // text, centered on the canvas mid-axis. At scale = 1.0 the lines
+  // sit in equal vertical slots with a 4% top/bottom margin. Pinch
+  // scales the whole composition around canvas center:
+  //
+  //   • Each line's font size is multiplied by `scale`
+  //   • Each line's Y position is scaled away from canvas center
+  //     (Y' = centerY + (naturalY - centerY) * scale)
+  //
+  // So at scale < 1 the lines collapse toward canvas center and
+  // shrink; at scale > 1 they spread toward the canvas edges and
+  // grow. Multi-line text reads as a unified group that scales
+  // around its geometric center.
+  function renderMask(linesArr, scale) {
+    mask.background(255);
+    mask.fill(0);
+    mask.noStroke();
+    mask.textFont('Anton');
+    mask.textAlign(CENTER, CENTER);
+
+    const n = linesArr.length;
+    if (n === 0) {
+      mask.loadPixels();
+      maskPixels = mask.pixels;
+      return;
+    }
+
+    const centerX = POSTER_W * 0.5;
+    const centerY = POSTER_H * 0.5;
+    const topMargin = POSTER_H * 0.04;
+    const availH = POSTER_H - topMargin * 2;
+    const lineSlot = availH / n;
+    const maxWidth = POSTER_W * 0.96;
+
+    for (let i = 0; i < n; i++) {
+      const line = linesArr[i];
+      if (!line) continue;
+
+      // Natural fit for this line (size at scale = 1.0) — either
+      // width-limited or line-slot-height-limited, whichever is
+      // smaller.
+      mask.textSize(400);
+      const w = Math.max(mask.textWidth(line), 1);
+      const scaleByW = maxWidth / w;
+      const scaleByH = (lineSlot * 1.35) / 400;
+      const baseSize = 400 * Math.min(scaleByW, scaleByH);
+      const finalSize = baseSize * scale;
+      mask.textSize(finalSize);
+
+      // Natural Y (at scale 1.0) is the center of the i-th slot.
+      // Scale it around canvas center so multi-line text spreads
+      // or collapses as a group.
+      const baseY = topMargin + lineSlot * (i + 0.5);
+      const y = centerY + (baseY - centerY) * scale;
+
+      // Slight optical-center correction for Anton
+      mask.text(line, centerX, y + finalSize * 0.02);
+    }
+
+    mask.loadPixels();
+    maskPixels = mask.pixels;
+  }
+
+  // Re-render the mask only when the text or scale has changed
+  // enough to matter. The text cache key is the joined lines
+  // string so any edit to any line forces a refresh.
+  function ensureMaskCurrent() {
+    if (!fontReady) return;
+    const linesKey = lines.join('\u0001'); // unlikely to appear in text
+    const linesChanged = linesKey !== lastLinesKey;
+    const scaleChanged = Math.abs(currentScale - lastScale) > 0.006;
+    if (!linesChanged && !scaleChanged && maskPixels) return;
+    renderMask(lines, currentScale);
+    lastLinesKey = linesKey;
+    lastScale    = currentScale;
+  }
+
+  // Sample the mask at (x, y). Returns true if the pixel is inside
+  // the letter (R channel < 128). Bounds-clamped.
+  function sampleMask(x, y) {
+    if (x < 0) x = 0; else if (x >= POSTER_W) x = POSTER_W - 1;
+    if (y < 0) y = 0; else if (y >= POSTER_H) y = POSTER_H - 1;
+    const idx = (((y | 0) * POSTER_W + (x | 0)) * 4);
+    return maskPixels[idx] < 128;
+  }
+
+  // =============================
+  // Tile Picking
+  // =============================
+
+  // Decorative tiles for cells OUTSIDE the letter. Three palettes
+  // are available, cycled by keyboard [ / ]. Noise is 2D only — no
+  // time component, so the paper holds still.
+  function pickOutsideTile(i, j) {
+    const n = noise(i * 0.35, j * 0.35);
+    const p = paletteIdx % PALETTE_COUNT;
+    if (p === 0) {
+      if (n < 0.55) return T.WHITE;
+      if (n < 0.72) return T.HALFTONE_LIGHT;
+      if (n < 0.86) return T.CIRCLE_HOLLOW;
+      return T.HALFTONE_HEAVY;
+    } else if (p === 1) {
+      if (n < 0.50) return T.WHITE;
+      if (n < 0.70) return T.HALFTONE_HEAVY;
+      if (n < 0.85) return T.STRIPE_V;
+      return T.CIRCLE_HOLLOW;
+    } else {
+      if (n < 0.60) return T.WHITE;
+      if (n < 0.78) return T.CIRCLE_HOLLOW;
+      if (n < 0.90) return T.STRIPE_H;
+      return T.HALFTONE_LIGHT;
+    }
+  }
+
+  // Tiles for cells fully INSIDE the letter. Dither-heavy: the
+  // letter's interior reads as a bitmap texture rather than a flat
+  // black shape. Noise is 2D only — the value zones across the
+  // letter are static per cell position.
+  function pickInsideTile(i, j) {
+    const n = noise(i * 0.35 + 100, j * 0.35 + 100);
+    if (n < 0.18) return T.DITHER_50;   // mid dither — accent
+    if (n < 0.45) return T.DITHER_75;   // heavy dither — dominant
+    if (n < 0.75) return T.BLACK;       // solid — anchor
+    if (n < 0.88) return T.CIRCLE_FILLED;
+    return T.DITHER_75;
+  }
+
+  // =============================
+  // Tile Rendering
+  // =============================
+
+  // Every tile is drawn into a cell (x, y, s). `invert` swaps fg/bg
+  // so the same tile table handles both normal and grab-inverted
+  // composition.
+  function drawTile(x, y, s, tile, invert) {
+    const fg = invert ? 255 : 0;
+    const bg = invert ? 0 : 255;
+
+    noStroke();
+    // Paint the cell's "paper"
+    fill(bg);
+    rect(x, y, s, s);
+    fill(fg);
+
+    switch (tile) {
+      case T.WHITE:
+        break;
+
+      case T.BLACK:
+        rect(x, y, s, s);
+        break;
+
+      case T.CIRCLE_FILLED:
+        circle(x + s / 2, y + s / 2, s * 0.82);
+        break;
+
+      case T.CIRCLE_HOLLOW:
+        // Ring — fg outer disk, bg inner hole
+        circle(x + s / 2, y + s / 2, s * 0.82);
+        fill(bg);
+        circle(x + s / 2, y + s / 2, s * 0.56);
+        break;
+
+      case T.HALFTONE_LIGHT: {
+        const n = 4;
+        const r = s / (n * 2.6);
+        for (let dy = 0; dy < n; dy++) {
+          for (let dx = 0; dx < n; dx++) {
+            circle(x + (dx + 0.5) * s / n, y + (dy + 0.5) * s / n, r * 2);
+          }
+        }
+        break;
+      }
+
+      case T.HALFTONE_HEAVY: {
+        const n = 3;
+        const r = s / (n * 1.9);
+        for (let dy = 0; dy < n; dy++) {
+          for (let dx = 0; dx < n; dx++) {
+            circle(x + (dx + 0.5) * s / n, y + (dy + 0.5) * s / n, r * 2);
+          }
+        }
+        break;
+      }
+
+      case T.STRIPE_V: {
+        const n = 5;
+        const w = s / n;
+        for (let k = 0; k < n; k += 2) rect(x + k * w, y, w, s);
+        break;
+      }
+
+      case T.STRIPE_H: {
+        const n = 5;
+        const w = s / n;
+        for (let k = 0; k < n; k += 2) rect(x, y + k * w, s, w);
+        break;
+      }
+
+      // --- 1-corner wedges: medium-size corner triangles ---
+      // 0.85 × cell gives a chunky reference-match shape.
+      case T.WEDGE_TL:
+        triangle(x, y, x + s * 0.85, y, x, y + s * 0.85);
+        break;
+      case T.WEDGE_TR:
+        triangle(x + s, y, x + s - s * 0.85, y, x + s, y + s * 0.85);
+        break;
+      case T.WEDGE_BL:
+        triangle(x, y + s, x, y + s - s * 0.85, x + s * 0.85, y + s);
+        break;
+      case T.WEDGE_BR:
+        triangle(x + s, y + s, x + s - s * 0.85, y + s, x + s, y + s - s * 0.85);
+        break;
+
+      // --- 2-corner adjacent: half-cell rectangles ---
+      case T.HALF_T: rect(x, y, s, s / 2); break;
+      case T.HALF_B: rect(x, y + s / 2, s, s / 2); break;
+      case T.HALF_L: rect(x, y, s / 2, s); break;
+      case T.HALF_R: rect(x + s / 2, y, s / 2, s); break;
+
+      // --- 3-corner: fill the cell, punch a small corner out ---
+      case T.BIG_TL:
+        rect(x, y, s, s);
+        fill(bg);
+        triangle(x, y, x + s * 0.55, y, x, y + s * 0.55);
+        break;
+      case T.BIG_TR:
+        rect(x, y, s, s);
+        fill(bg);
+        triangle(x + s, y, x + s - s * 0.55, y, x + s, y + s * 0.55);
+        break;
+      case T.BIG_BL:
+        rect(x, y, s, s);
+        fill(bg);
+        triangle(x, y + s, x, y + s - s * 0.55, x + s * 0.55, y + s);
+        break;
+      case T.BIG_BR:
+        rect(x, y, s, s);
+        fill(bg);
+        triangle(x + s, y + s, x + s - s * 0.55, y + s, x + s, y + s - s * 0.55);
+        break;
+
+      // --- 2-corner diagonal: two small triangles in opposite corners ---
+      case T.DIAG_TLBR:
+        triangle(x, y, x + s * 0.6, y, x, y + s * 0.6);
+        triangle(x + s, y + s, x + s - s * 0.6, y + s, x + s, y + s - s * 0.6);
+        break;
+      case T.DIAG_TRBL:
+        triangle(x + s, y, x + s - s * 0.6, y, x + s, y + s * 0.6);
+        triangle(x, y + s, x, y + s - s * 0.6, x + s * 0.6, y + s);
+        break;
+
+      // --- Bayer-ordered dither (4×4 sub-cell grid) ---
+      case T.DITHER_25: {
+        const u = s / 4;
+        for (let k = 0; k < DITHER_POS_25.length; k++) {
+          const p = DITHER_POS_25[k];
+          rect(x + p[0] * u, y + p[1] * u, u, u);
+        }
+        break;
+      }
+      case T.DITHER_50: {
+        const u = s / 4;
+        for (let k = 0; k < DITHER_POS_50.length; k++) {
+          const p = DITHER_POS_50[k];
+          rect(x + p[0] * u, y + p[1] * u, u, u);
+        }
+        break;
+      }
+      case T.DITHER_75: {
+        const u = s / 4;
+        for (let k = 0; k < DITHER_POS_75.length; k++) {
+          const p = DITHER_POS_75[k];
+          rect(x + p[0] * u, y + p[1] * u, u, u);
+        }
+        break;
+      }
+    }
+  }
+
+  // =============================
+  // Main Draw Loop
+  // =============================
+
+  function draw() {
+    if (!fontReady) {
+      background(12);
+      fill(255, 40);
+      noStroke();
+      textAlign(CENTER, CENTER);
+      textFont('monospace');
+      textSize(9);
+      text('·  LOADING  ·', width / 2, height / 2);
+      return;
+    }
+
+    // --- Pinch distance → target scale ---
+    // Thumb-index distance maps to a scale factor in [MIN, MAX].
+    // This is the ONLY source of motion in the sketch: if the hand
+    // is absent, targetScale holds its last value and currentScale
+    // stops lerping (targetScale - currentScale → 0). The poster
+    // freezes instantly when the hand leaves the frame.
+    if (hand.present) {
+      const raw = (hand.pinchDist - PINCH_NEAR) / (PINCH_FAR - PINCH_NEAR);
+      const clamped = raw < 0 ? 0 : (raw > 1 ? 1 : raw);
+      targetScale = MIN_SCALE + clamped * (MAX_SCALE - MIN_SCALE);
+    }
+    currentScale += (targetScale - currentScale) * 0.35;
+
+    // Re-render the mask if the letter or scale has shifted
+    ensureMaskCurrent();
+    if (!maskPixels) {
+      background(12);
+      return;
+    }
+
+    // Global invert from Grab gesture
+    const globalInvert = hand.gesture === 'grab';
+    const paperBg = globalInvert ? 0 : 255;
+
+    background(paperBg);
+
+    // Scale the 4 quadrant circles around canvas center so they
+    // scale with the letter. Centers move toward the canvas center
+    // as scale shrinks; radius scales linearly.
+    const cx0 = POSTER_W * 0.5;
+    const cy0 = POSTER_H * 0.5;
+    const sc  = currentScale;
+    const scaledCircles = [
+      { cx: cx0 + (BIG_CIRCLES[0].cx - cx0) * sc, cy: cy0 + (BIG_CIRCLES[0].cy - cy0) * sc },
+      { cx: cx0 + (BIG_CIRCLES[1].cx - cx0) * sc, cy: cy0 + (BIG_CIRCLES[1].cy - cy0) * sc },
+      { cx: cx0 + (BIG_CIRCLES[2].cx - cx0) * sc, cy: cy0 + (BIG_CIRCLES[2].cy - cy0) * sc },
+      { cx: cx0 + (BIG_CIRCLES[3].cx - cx0) * sc, cy: cy0 + (BIG_CIRCLES[3].cy - cy0) * sc },
+    ];
+    const scaledBigR  = BIG_R * sc;
+    const scaledBigR2 = scaledBigR * scaledBigR;
+
+    // --- Render grid ---
+    for (let j = 0; j < GRID_H; j++) {
+      for (let i = 0; i < GRID_W; i++) {
+        const x = i * CELL;
+        const y = j * CELL;
+
+        // 4 corner samples — inset slightly to avoid anti-aliased edge noise
+        const e = 2;
+        const tl = sampleMask(x + e,              y + e);
+        const tr = sampleMask(x + CELL - 1 - e,   y + e);
+        const bl = sampleMask(x + e,              y + CELL - 1 - e);
+        const br = sampleMask(x + CELL - 1 - e,   y + CELL - 1 - e);
+
+        const bits = (tl ? 1 : 0) | (tr ? 2 : 0) | (bl ? 4 : 0) | (br ? 8 : 0);
+
+        // Base tile from corner pattern
+        let tile;
+        if (bits === 0)       tile = pickOutsideTile(i, j);
+        else if (bits === 15) tile = pickInsideTile(i, j);
+        else                  tile = BITS_TO_TILE[bits];
+
+        // Gesture modifiers — per-cell, all position-based (no time)
+        let cellInvert = false;
+        if (hand.present) {
+          const u = (i + 0.5) / GRID_W;
+          const v = (j + 0.5) / GRID_H;
+          const du = u - hand.u;
+          const dv = v - hand.v;
+          const d2 = du * du + dv * dv;
+
+          if (hand.gesture === 'point' && d2 < 0.0064) {
+            // Pierce — tight invert disc at fingertip (r ≈ 0.08)
+            cellInvert = true;
+          } else if (hand.gesture === 'open' && d2 < 0.09) {
+            // Flashlight — broad invert disc at palm (r ≈ 0.30)
+            cellInvert = true;
+          }
+        }
+
+        // Big-circle modulation — XOR inside any of the 4 scaled
+        // quadrant circles flips the cell's invert state. Overlap
+        // regions (inside ≥ 2 circles) cancel back to normal,
+        // giving the composition interlocking "windows".
+        let circleInvert = false;
+        const px = x + CELL * 0.5;
+        const py = y + CELL * 0.5;
+        for (let k = 0; k < 4; k++) {
+          const c = scaledCircles[k];
+          const ddx = px - c.cx;
+          const ddy = py - c.cy;
+          if (ddx * ddx + ddy * ddy < scaledBigR2) {
+            circleInvert = !circleInvert;
+          }
+        }
+
+        // XOR all three invert sources: global, gesture-cell, circle
+        const invert = (globalInvert ? 1 : 0)
+                     ^ (cellInvert   ? 1 : 0)
+                     ^ (circleInvert ? 1 : 0);
+        drawTile(x, y, CELL, tile, invert === 1);
+      }
+    }
+
+    // Draw the big-circle outlines on top so the quadrant shapes
+    // are explicit — even cells that XOR-cancel inside overlapping
+    // circles still read as part of a circle boundary.
+    drawBigCircleOutlines(globalInvert, scaledCircles, scaledBigR);
+
+    // Shared poster overlay — 5-slot metadata convention
+    if (window.POSTER_SYSTEM) {
+      POSTER_SYSTEM.drawOverlay(drawingContext, {
+        experimentId: '05',
+        seriesName: 'BITMAP',
+        topRight: 'SCALE · S ' + currentScale.toFixed(2),
+        bottomRight: 'GESTURE · ' + (hand.present ? hand.gesture.toUpperCase() : 'IDLE'),
+        verticalContent: lines.join(' / '),
+        invert: globalInvert, // flips with the Grab gesture
+        hidden: overlayHidden,
+      });
+    }
+  }
+
+  // Thin outlines for the 4 quadrant circles. Takes pre-scaled
+  // circles and radius from the render pass so the outlines always
+  // match the XOR modulation used in the grid.
+  function drawBigCircleOutlines(invert, circles, r) {
+    const fg = invert ? 255 : 0;
+    noFill();
+    stroke(fg, 210);
+    strokeWeight(2.5);
+    for (let k = 0; k < circles.length; k++) {
+      circle(circles[k].cx, circles[k].cy, r * 2);
+    }
+    noStroke();
+  }
+
+  // NOTE: overlay rendering is delegated to POSTER_SYSTEM in
+  // poster-system.js — same convention across the whole series.
+
+  // =============================
+  // Text Input — sequence editor
+  // =============================
+
+  // Parse the raw input into an array of text lines.
+  //   "MOTION"         → ["MOTION"]
+  //   "MOTION TEXT"    → ["MOTION TEXT"]     (space stays in line)
+  //   "MO/TION"        → ["MO", "TION"]      (/ is the line break)
+  //   "M/O/T/I/O/N"    → ["M", "O", "T", "I", "O", "N"]
+  // Characters are filtered to A-Z, 0-9, and space so glyphs the
+  // Anton subset can't render won't end up on the canvas.
+  function parseInput(str) {
+    if (!str || !str.trim()) return DEFAULT_LINES.slice();
+    const up = str.toUpperCase();
+    const pieces = up.indexOf('/') >= 0
+      ? up.split('/')
+      : [up];
+    const out = [];
+    for (let i = 0; i < pieces.length; i++) {
+      const cleaned = pieces[i].trim().replace(/[^A-Z0-9 ]/g, '').replace(/\s+/g, ' ');
+      if (cleaned.length > 0) out.push(cleaned);
+    }
+    if (out.length === 0) return DEFAULT_LINES.slice();
+    return out.slice(0, MAX_LINES);
+  }
+
+  function updateLines(newLines) {
+    lines.length = 0;
+    for (let i = 0; i < newLines.length; i++) lines.push(newLines[i]);
+    // Mask re-renders on the next draw() via ensureMaskCurrent()
+  }
+
+  function initTextInput() {
+    const el = document.getElementById('text-input');
+    if (!el) return;
+    let timer = null;
+    el.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        updateLines(parseInput(el.value));
+      }, 220);
+    });
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        clearTimeout(timer);
+        updateLines(parseInput(el.value));
+        el.blur();
+        e.preventDefault();
+      }
+    });
+  }
+
+  // =============================
+  // Input
+  // =============================
+
+  function keyPressed() {
+    const a = document.activeElement;
+    if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) return;
+
+    if (key === 's' || key === 'S') {
+      // Force overlay visible for the save frame so every export
+      // carries its identity tags. Restore after saving.
+      const prev = overlayHidden;
+      overlayHidden = false;
+      redraw();
+      saveCanvas('bitmap', 'png');
+      overlayHidden = prev;
+      return false;
+    }
+    if (key === 'h' || key === 'H') {
+      overlayHidden = !overlayHidden;
+      return false;
+    }
+    if (key === 'r' || key === 'R') {
+      // Reshuffle decorative tiles by reseeding the p5 noise RNG.
+      // Discrete, on-demand — not motion.
+      noiseSeed(Math.floor(Math.random() * 1e6) + 1);
+      return false;
+    }
+    if (key === ']') {
+      paletteIdx = (paletteIdx + 1) % PALETTE_COUNT;
+      return false;
+    }
+    if (key === '[') {
+      paletteIdx = (paletteIdx + PALETTE_COUNT - 1) % PALETTE_COUNT;
+      return false;
+    }
+  }
+
+  // =============================
+  // Hand Tracking (MediaPipe)
+  // =============================
+
+  const HAND_CONNECTIONS = [
+    [0,1],[1,2],[2,3],[3,4],
+    [0,5],[5,6],[6,7],[7,8],
+    [0,9],[9,10],[10,11],[11,12],
+    [0,13],[13,14],[14,15],[15,16],
+    [0,17],[17,18],[18,19],[19,20],
+    [5,9],[9,13],[13,17],
+  ];
+  const HAND_TIPS = new Set([4, 8, 12, 16, 20]);
+  const handCanvas = document.getElementById('hand-canvas');
+  const handCtx = handCanvas.getContext('2d');
+
+  function initHandTracking() {
+    if (typeof Hands === 'undefined' || typeof Camera === 'undefined') {
+      setStatus('error', 'No MP');
+      return;
+    }
+    const videoEl = document.getElementById('webcam');
+    const hands = new Hands({
+      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${f}`,
+    });
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.5,
+    });
+
+    hands.onResults(results => {
+      const lm = results.multiHandLandmarks && results.multiHandLandmarks[0];
+      if (lm) {
+        hand.landmarks = lm;
+        processHand(lm);
+        drawHandSkeleton(lm);
+        setStatus('active', 'Tracking');
+      } else {
+        hand.landmarks = null;
+        hand.present = false;
+        hand.prevGesture = hand.gesture;
+        hand.gesture = 'none';
+        updateGestureUI('none');
+        drawHandSkeleton(null);
+        setStatus('ready', 'Ready');
+      }
+    });
+
+    const cam = new Camera(videoEl, {
+      onFrame: async () => { await hands.send({ image: videoEl }); },
+      width: 320,
+      height: 240,
+    });
+    cam.start().then(() => {
+      setStatus('ready', 'Ready');
+    }).catch(() => {
+      setStatus('error', 'No Camera');
+    });
+  }
+
+  function processHand(lm) {
+    const iu = 1 - lm[8].x;
+    const iv = lm[8].y;
+    const tu = 1 - lm[4].x;
+    const tv = lm[4].y;
+
+    const pinchDist = Math.sqrt(
+      (lm[4].x - lm[8].x) ** 2 +
+      (lm[4].y - lm[8].y) ** 2 +
+      (lm[4].z - lm[8].z) ** 2
+    );
+
+    const indexUp  = lm[8].y  < lm[6].y;
+    const middleUp = lm[12].y < lm[10].y;
+    const ringUp   = lm[16].y < lm[14].y;
+    const pinkyUp  = lm[20].y < lm[18].y;
+    const extended = [indexUp, middleUp, ringUp, pinkyUp].filter(Boolean).length;
+
+    let g;
+    if (pinchDist < 0.10) g = 'pinch';
+    else if (extended === 1 && indexUp) g = 'point';
+    else if (extended === 2 && indexUp && middleUp) g = 'peace';
+    else if (extended >= 3) g = 'open';
+    else if (extended <= 1) g = 'grab';
+    else g = 'none';
+
+    hand.prevGesture = hand.gesture;
+    hand.present = true;
+    hand.u = lerpN(hand.u, iu, 0.35);
+    hand.v = lerpN(hand.v, iv, 0.35);
+    hand.pu = lerpN(hand.pu, (iu + tu) / 2, 0.35);
+    hand.pv = lerpN(hand.pv, (iv + tv) / 2, 0.35);
+    // Raw thumb-index distance — drives the continuous pinch scale
+    hand.pinchDist = pinchDist;
+    hand.gesture = g;
+
+    // Peace gesture cycles the decorative tile palette once per
+    // transition. With the full text rendered on load there is no
+    // letter cycle to advance.
+    if (g === 'peace' && hand.prevGesture !== 'peace') {
+      paletteIdx = (paletteIdx + 1) % PALETTE_COUNT;
+    }
+
+    updateGestureUI(g);
+  }
+
+  function lerpN(a, b, k) { return a + (b - a) * k; }
+
+  function drawHandSkeleton(lm) {
+    const w = handCanvas.width;
+    const h = handCanvas.height;
+    handCtx.clearRect(0, 0, w, h);
+
+    if (!lm) {
+      handCtx.fillStyle = 'rgba(255,255,255,0.08)';
+      handCtx.font = '10px Helvetica';
+      handCtx.textAlign = 'center';
+      handCtx.fillText('NO INPUT', w / 2, h / 2);
+      return;
+    }
+
+    handCtx.strokeStyle = 'rgba(255,255,255,0.22)';
+    handCtx.lineWidth = 1;
+    for (const [a, b] of HAND_CONNECTIONS) {
+      handCtx.beginPath();
+      handCtx.moveTo((1 - lm[a].x) * w, lm[a].y * h);
+      handCtx.lineTo((1 - lm[b].x) * w, lm[b].y * h);
+      handCtx.stroke();
+    }
+
+    for (let i = 0; i < lm.length; i++) {
+      handCtx.beginPath();
+      handCtx.arc((1 - lm[i].x) * w, lm[i].y * h, HAND_TIPS.has(i) ? 3 : 1.5, 0, Math.PI * 2);
+      handCtx.fillStyle = HAND_TIPS.has(i) ? '#ffffff' : 'rgba(255,255,255,0.55)';
+      handCtx.fill();
+    }
+  }
+
+  function updateGestureUI(g) {
+    document.querySelectorAll('.gesture-item').forEach(el => {
+      el.classList.toggle('active', el.dataset.gesture === g);
+    });
+  }
+
+  function setStatus(cls, text) {
+    const el = document.getElementById('status');
+    if (!el) return;
+    el.className = 'st-' + cls;
+    el.textContent = text;
+  }
+  </script>
+
+</body>
+</html>

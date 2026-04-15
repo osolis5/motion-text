@@ -3,939 +3,251 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gestures</title>
-    <meta name="description" content="Interactive typography controlled by hand gestures — Three.js + MediaPipe">
-    <meta property="og:title" content="Gestures — Interactive Typography">
-    <meta property="og:description" content="Hand-tracked gestures control typographic forms in real-time using Three.js and MediaPipe.">
+    <title>Motion Text</title>
+    <meta name="description" content="Interactive typography experiments — hand-tracked gestures control typographic forms in real-time">
     <meta name="theme-color" content="#0A0A0A">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            overflow: hidden;
+            min-height: 100vh;
             background: #0A0A0A;
             font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
             color: #fff;
             -webkit-font-smoothing: antialiased;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 32px;
         }
 
-        #three-canvas {
-            position: fixed;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
+        header {
+            text-align: center;
+            margin-bottom: 64px;
         }
-
-        .ui-panel {
-            position: fixed;
-            z-index: 100;
-            pointer-events: none;
-        }
-        .ui-panel > * { pointer-events: auto; }
-
-        #ui-left {
-            top: 32px; left: 32px;
-            width: 200px;
-        }
-
-        .ui-title {
-            font-size: 32px;
+        h1 {
+            font-size: clamp(36px, 6vw, 56px);
             font-weight: 700;
-            line-height: 1.0;
-            letter-spacing: -0.5px;
-            margin-bottom: 4px;
+            letter-spacing: -1px;
+            line-height: 1;
+            margin-bottom: 10px;
         }
-        .ui-subtitle {
+        .subtitle {
             font-size: 10px;
             font-weight: 400;
-            letter-spacing: 3px;
+            letter-spacing: 4px;
             text-transform: uppercase;
             color: rgba(255,255,255,0.3);
-            margin-bottom: 24px;
         }
-        .ui-divider {
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 28px;
             width: 100%;
-            height: 1px;
-            background: rgba(255,255,255,0.1);
-            margin: 16px 0;
+            max-width: 1060px;
         }
-        .ui-label {
+
+        /* ═══════════════════════════════════════════════════════
+           Swiss-style index cards
+           Pure white boxes with black titles and grey body text.
+           Sharp corners, no colored accents, no gradients —
+           maximum Müller-Brockmann / Helvetica discipline.
+           ═══════════════════════════════════════════════════════ */
+        .card {
+            position: relative;
+            background: #ffffff;
+            border: 1px solid #e6e6e6;
+            border-radius: 0;
+            padding: 44px 34px 34px;
+            text-decoration: none;
+            color: #000000;
+            transition: transform 0.25s ease, box-shadow 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            min-height: 300px;
+        }
+        .card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+        }
+
+        .card-num {
             font-size: 9px;
             font-weight: 500;
             letter-spacing: 3px;
             text-transform: uppercase;
-            color: rgba(255,255,255,0.25);
+            color: #888888;
+            margin-bottom: 26px;
+        }
+        .card-title {
+            font-size: 30px;
+            font-weight: 700;
+            letter-spacing: -0.6px;
+            line-height: 1;
+            color: #000000;
             margin-bottom: 8px;
         }
-
-        #text-input {
-            width: 100%;
-            background: none;
-            border: none;
-            border-bottom: 1px solid rgba(255,255,255,0.15);
-            color: #fff;
-            font-family: inherit;
-            font-size: 16px;
+        .card-sub {
+            font-size: 10px;
             font-weight: 500;
-            letter-spacing: 2px;
-            padding: 6px 0;
-            outline: none;
+            letter-spacing: 3px;
             text-transform: uppercase;
+            color: #555555;
+            margin-bottom: 22px;
         }
-        #text-input:focus { border-bottom-color: #4CBB17; }
+        .card-desc {
+            font-size: 13px;
+            line-height: 1.65;
+            color: #5a5a5a;
+            flex: 1;
+        }
 
-        /* Mode selector */
-        .mode-list {
+        .card-tags {
             display: flex;
             gap: 6px;
             flex-wrap: wrap;
+            margin-top: 20px;
         }
-        .mode-btn {
-            background: none;
-            border: 1px solid rgba(255,255,255,0.1);
-            color: rgba(255,255,255,0.3);
-            font-family: inherit;
+        .tag {
             font-size: 9px;
+            font-weight: 500;
             letter-spacing: 1.5px;
             text-transform: uppercase;
-            padding: 5px 10px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .mode-btn:hover { border-color: rgba(255,255,255,0.3); }
-        .mode-btn.active {
-            border-color: #4CBB17;
-            color: #4CBB17;
+            padding: 4px 9px;
+            border: 1px solid #d0d0d0;
+            border-radius: 0;
+            color: #666666;
         }
 
-        /* Gesture list */
-        .gesture-list {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-        }
-        .gesture-item {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 10px;
-            letter-spacing: 1.5px;
+        .card-enter {
+            margin-top: 26px;
+            font-size: 9px;
+            font-weight: 500;
+            letter-spacing: 3px;
             text-transform: uppercase;
+            color: #888888;
+            transition: color 0.25s ease;
+        }
+        .card:hover .card-enter { color: #000000; }
+
+        footer {
+            margin-top: 64px;
+            text-align: center;
+        }
+        .footer-note {
+            font-size: 9px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: rgba(255,255,255,0.12);
+        }
+        .footer-note a {
             color: rgba(255,255,255,0.2);
-            transition: color 0.2s;
+            text-decoration: none;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
         }
-        .gesture-item.active { color: #4CBB17; }
-        .gesture-dot {
-            width: 5px; height: 5px;
-            border-radius: 50%;
-            background: rgba(255,255,255,0.15);
-            flex-shrink: 0;
-            transition: background 0.2s;
-        }
-        .gesture-item.active .gesture-dot { background: #4CBB17; }
-        .gesture-desc {
-            color: rgba(255,255,255,0.12);
-            margin-left: 4px;
-        }
-
-        #ui-right { top: 32px; right: 32px; }
-        #hand-canvas {
-            width: 180px; height: 135px;
-            border: 1px solid rgba(255,255,255,0.08);
-            display: block;
-            background: rgba(10,10,10,0.8);
-        }
-
-        #ui-bottom {
-            bottom: 24px; left: 32px; right: 32px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        #status {
-            font-size: 9px;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-            transition: color 0.3s;
-        }
-        .st-loading { color: rgba(255,255,255,0.2); }
-        .st-ready   { color: rgba(255,255,255,0.3); }
-        .st-active  { color: #4CBB17; }
-        #version {
-            font-size: 9px;
-            letter-spacing: 2px;
-            color: rgba(255,255,255,0.12);
-        }
-
-        #webcam { display: none; }
     </style>
 </head>
 <body>
-    <canvas id="three-canvas"></canvas>
-    <video id="webcam" autoplay playsinline></video>
 
-    <div id="ui-left" class="ui-panel">
-        <div class="ui-title">Gestures</div>
-        <div class="ui-subtitle">Interactive Typography</div>
-        <div class="ui-divider"></div>
+    <header>
+        <h1>Motion Text</h1>
+        <div class="subtitle">Interactive Typography Experiments</div>
+    </header>
 
-        <div class="ui-label">Input</div>
-        <input id="text-input" type="text" value="MOTION" maxlength="14">
-        <div class="ui-divider"></div>
+    <div class="grid">
+        <a href="gestures.html" class="card card--gestures">
+            <div class="card-num">Experiment 01</div>
+            <div class="card-title">Gestures</div>
+            <div class="card-sub">Interactive Typography</div>
+            <div class="card-desc">
+                Hand-tracked gestures control typographic forms in real-time.
+                Point to push, pinch to pull, open palm to scale, and peace sign to rotate
+                across particles, mesh, and 3D extrusion modes.
+            </div>
+            <div class="card-tags">
+                <span class="tag">Particles</span>
+                <span class="tag">Mesh</span>
+                <span class="tag">Extrusion</span>
+            </div>
+            <div class="card-enter">Enter &rarr;</div>
+        </a>
 
-        <div class="ui-label">Mode</div>
-        <div class="mode-list">
-            <button class="mode-btn active" data-mode="particles">Particles</button>
-            <button class="mode-btn" data-mode="mesh">Mesh</button>
-            <button class="mode-btn" data-mode="extrusion">Extrusion</button>
-        </div>
-        <div class="ui-divider"></div>
+        <a href="voxel.html" class="card card--voxels">
+            <div class="card-num">Experiment 02</div>
+            <div class="card-title">Voxels</div>
+            <div class="card-sub">Gesture-Reactive Field</div>
+            <div class="card-desc">
+                A circular field of spheres with spring physics.
+                Gestures raise, push, lift, and ripple the surface,
+                shifting colors from cornflower blue to Klein International Blue
+                based on displacement.
+            </div>
+            <div class="card-tags">
+                <span class="tag">Instanced Mesh</span>
+                <span class="tag">Spring Physics</span>
+            </div>
+            <div class="card-enter">Enter &rarr;</div>
+        </a>
 
-        <div class="ui-label">Gestures</div>
-        <div class="gesture-list">
-            <div class="gesture-item" data-gesture="point">
-                <span class="gesture-dot"></span>Point <span class="gesture-desc">Push</span>
+        <a href="breath.html" class="card card--breath">
+            <div class="card-num">Experiment 03</div>
+            <div class="card-title">Breath</div>
+            <div class="card-sub">Wave Dynamics</div>
+            <div class="card-desc">
+                7,000 points forming a 3D wave surface with water dynamics.
+                Blow into your microphone to generate waves that ripple
+                across the field, or click and drag to create ripples directly.
             </div>
-            <div class="gesture-item" data-gesture="pinch">
-                <span class="gesture-dot"></span>Pinch <span class="gesture-desc">Pull</span>
+            <div class="card-tags">
+                <span class="tag">Wave Physics</span>
+                <span class="tag">Mic Input</span>
+                <span class="tag">Orthographic 3D</span>
             </div>
-            <div class="gesture-item" data-gesture="open">
-                <span class="gesture-dot"></span>Open <span class="gesture-desc">Move + Scale</span>
+            <div class="card-enter">Enter &rarr;</div>
+        </a>
+
+        <a href="displace.html" class="card card--displace">
+            <div class="card-num">Experiment 04</div>
+            <div class="card-title">Displace</div>
+            <div class="card-sub">Gesture Refraction</div>
+            <div class="card-desc">
+                Monumental condensed type on an 11:15 portrait canvas,
+                warped pixel-by-pixel through a gesture-driven displacement
+                field. Point pierces, open palm pushes, pinch pulls,
+                peace swirls, and a closed fist freezes the light.
             </div>
-            <div class="gesture-item" data-gesture="grab">
-                <span class="gesture-dot"></span>Bear Claw <span class="gesture-desc">Attract</span>
+            <div class="card-tags">
+                <span class="tag">Pixel Refraction</span>
+                <span class="tag">P5.js</span>
+                <span class="tag">Hand Tracking</span>
             </div>
-            <div class="gesture-item" data-gesture="peace">
-                <span class="gesture-dot"></span>Peace <span class="gesture-desc">Rotate</span>
+            <div class="card-enter">Enter &rarr;</div>
+        </a>
+
+        <a href="bitmap.html" class="card card--bitmap">
+            <div class="card-num">Experiment 05</div>
+            <div class="card-title">Bitmap</div>
+            <div class="card-sub">Grid Typography</div>
+            <div class="card-desc">
+                Monumental display letters constructed from an 11×15 grid
+                of halftone, wedge, and circle tiles. Swiss rigor meets
+                punk bitmap — letters emerge from corner-sampled tile
+                patterns, with gestures sparkling, inverting, and freezing
+                the live composition.
             </div>
-        </div>
+            <div class="card-tags">
+                <span class="tag">Tile Grid</span>
+                <span class="tag">Halftone</span>
+                <span class="tag">B/W</span>
+            </div>
+            <div class="card-enter">Enter &rarr;</div>
+        </a>
     </div>
 
-    <div id="ui-right" class="ui-panel">
-        <div class="ui-label" style="margin-bottom:6px">Tracking</div>
-        <canvas id="hand-canvas" width="360" height="270"></canvas>
-    </div>
+    <footer>
+        <div class="footer-note">Camera &amp; microphone required &mdash; Three.js + MediaPipe + Web Audio</div>
+    </footer>
 
-    <div id="ui-bottom" class="ui-panel">
-        <div id="status" class="st-loading">Loading</div>
-        <div id="version">v1.2</div>
-    </div>
-
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js" crossorigin="anonymous"></script>
-
-    <script type="importmap">
-    {
-        "imports": {
-            "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
-        }
-    }
-    </script>
-
-    <script type="module">
-        import * as THREE from 'three';
-        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-        import { FontLoader } from 'three/addons/loaders/FontLoader.js';
-        import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
-
-        // ═══════════════════════════════════════════════════════
-        //  CONFIG
-        // ═══════════════════════════════════════════════════════
-        const CONFIG = {
-            particleSampling: 3,
-            particleSize: 0.15,
-            pushRadius: 12,
-            pushRadiusSq: 144,
-            pushStrength: 7,
-            attractStrength: 12,
-            extrusionForceScale: 0.25,
-            grabRadius: 6,
-            grabRadiusSq: 36,
-            grabStrength: 1.8,
-            returnSpeed: 0.15,
-            cursorSmoothing: 0.65,
-            scaleSmoothing: 0.22,
-            positionSmoothing: 0.22,
-            rotationSmoothing: 0.14,
-            pinchThreshold: 0.1,
-            connectionMaxDist: 0.22,
-            bloomStrength: 0.6,
-            bloomRadius: 0.3,
-            bloomThreshold: 0.9,
-        };
-
-        // ═══════════════════════════════════════════════════════
-        //  STATE
-        // ═══════════════════════════════════════════════════════
-        const state = {
-            mode: 'particles',
-            font: null,
-            currentText: 'MOTION',
-            handData: null,
-            gesture: 'none',
-            pinchDistance: 1,
-            indexTip3D: new THREE.Vector3(),
-            thumbTip3D: new THREE.Vector3(),
-            palmPos3D: new THREE.Vector3(),
-            smoothedIndex: new THREE.Vector3(),
-            smoothedPalm: new THREE.Vector3(),
-            targetScale: 1,
-            targetPosition: new THREE.Vector3(),
-            targetRotationY: 0,
-            pinchMidpoint3D: new THREE.Vector3(),
-            dragOffset: new THREE.Vector3(),
-            prevGesture: 'none',
-            fingerSpread: 0.25,
-        };
-
-        // ═══════════════════════════════════════════════════════
-        //  THREE.JS SCENE
-        // ═══════════════════════════════════════════════════════
-        const threeCanvas = document.getElementById('three-canvas');
-        const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x0A0A0A);
-        scene.fog = new THREE.FogExp2(0x0A0A0A, 0.01);
-
-        const camera = new THREE.PerspectiveCamera(
-            50, window.innerWidth / window.innerHeight, 0.1, 1000
-        );
-        camera.position.set(0, 0, 35);
-
-        const renderer = new THREE.WebGLRenderer({ canvas: threeCanvas, antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-        renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 1.5;
-
-        const composer = new EffectComposer(renderer);
-        composer.addPass(new RenderPass(scene, camera));
-        composer.addPass(new UnrealBloomPass(
-            new THREE.Vector2(window.innerWidth, window.innerHeight),
-            CONFIG.bloomStrength, CONFIG.bloomRadius, CONFIG.bloomThreshold
-        ));
-
-        // Lighting
-        scene.add(new THREE.AmbientLight(0x333344, 0.6));
-        const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
-        keyLight.position.set(10, 10, 10);
-        scene.add(keyLight);
-        const fillLight = new THREE.DirectionalLight(0x4466aa, 0.3);
-        fillLight.position.set(-8, -3, 5);
-        scene.add(fillLight);
-        const rimLight = new THREE.DirectionalLight(0xffffff, 0.2);
-        rimLight.position.set(0, 8, -10);
-        scene.add(rimLight);
-
-        // Grid
-        const grid = new THREE.GridHelper(80, 40, 0x151515, 0x0f0f0f);
-        grid.position.y = -6;
-        scene.add(grid);
-
-        // ═══════════════════════════════════════════════════════
-        //  CURSOR
-        // ═══════════════════════════════════════════════════════
-        const cursorGroup = new THREE.Group();
-        const cursorMat = new THREE.MeshBasicMaterial({
-            color: 0xffffff, transparent: true, opacity: 0,
-        });
-        cursorGroup.add(new THREE.Mesh(new THREE.SphereGeometry(0.25, 12, 12), cursorMat));
-        const ringMat = new THREE.MeshBasicMaterial({
-            color: 0xffffff, transparent: true, opacity: 0, side: THREE.DoubleSide,
-        });
-        const cursorRing = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.58, 32), ringMat);
-        cursorGroup.add(cursorRing);
-        scene.add(cursorGroup);
-
-        // ═══════════════════════════════════════════════════════
-        //  PARTICLE TEXT SYSTEM
-        // ═══════════════════════════════════════════════════════
-        const textCanvas2D = document.createElement('canvas');
-        const tCtx = textCanvas2D.getContext('2d');
-        textCanvas2D.width = 640;
-        textCanvas2D.height = 120;
-
-        let homePositions = [];
-        let particleCount = 0;
-        let particleGeo, particleMat, particleSystem, posAttr;
-        let randoms;
-
-        function sampleText(text) {
-            tCtx.clearRect(0, 0, 640, 120);
-            tCtx.fillStyle = 'white';
-            tCtx.font = `bold 80px 'Helvetica Neue', Helvetica, Arial, sans-serif`;
-            tCtx.textAlign = 'center';
-            tCtx.textBaseline = 'middle';
-            tCtx.fillText(text, 320, 60);
-            const imgData = tCtx.getImageData(0, 0, 640, 120);
-            const homes = [];
-            const step = CONFIG.particleSampling;
-            for (let y = 0; y < 120; y += step) {
-                for (let x = 0; x < 640; x += step) {
-                    if (imgData.data[(y * 640 + x) * 4] > 128) {
-                        homes.push({
-                            x: (x - 320) * 0.048,
-                            y: (60 - y) * 0.048,
-                            z: (Math.random() - 0.5) * 0.3,
-                        });
-                    }
-                }
-            }
-            return homes;
-        }
-
-        function buildParticles(text, scatter) {
-            if (particleSystem) scene.remove(particleSystem);
-            homePositions = sampleText(text);
-            particleCount = homePositions.length;
-
-            const positions = new Float32Array(particleCount * 3);
-            const colors = new Float32Array(particleCount * 3);
-            randoms = new Float32Array(particleCount);
-
-            for (let i = 0; i < particleCount; i++) {
-                const p = homePositions[i];
-                if (scatter) {
-                    positions[i*3]   = (Math.random()-0.5)*30;
-                    positions[i*3+1] = (Math.random()-0.5)*20;
-                    positions[i*3+2] = (Math.random()-0.5)*8;
-                } else {
-                    positions[i*3] = p.x; positions[i*3+1] = p.y; positions[i*3+2] = p.z;
-                }
-                colors[i*3] = 0.85; colors[i*3+1] = 0.85; colors[i*3+2] = 0.85;
-                randoms[i] = Math.random() * Math.PI * 2;
-            }
-
-            particleGeo = new THREE.BufferGeometry();
-            particleGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-            particleGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-            if (!particleMat) {
-                particleMat = new THREE.PointsMaterial({
-                    size: CONFIG.particleSize, vertexColors: true,
-                    transparent: true, opacity: 0.9,
-                    blending: THREE.AdditiveBlending, sizeAttenuation: true,
-                });
-            }
-            particleSystem = new THREE.Points(particleGeo, particleMat);
-            particleSystem.visible = state.mode !== 'extrusion';
-            scene.add(particleSystem);
-            posAttr = particleGeo.attributes.position;
-        }
-
-        // ═══════════════════════════════════════════════════════
-        //  CONNECTED MESH SYSTEM
-        // ═══════════════════════════════════════════════════════
-        let lineMesh, lineConnections = [], linePosAttr;
-
-        function buildConnections() {
-            if (lineMesh) { scene.remove(lineMesh); lineMesh = null; }
-            if (particleCount === 0) return;
-
-            const maxDist = CONFIG.connectionMaxDist;
-            const maxDistSq = maxDist * maxDist;
-
-            // Spatial grid for fast neighbor lookup
-            const grid = new Map();
-            for (let i = 0; i < particleCount; i++) {
-                const p = homePositions[i];
-                const key = `${Math.floor(p.x/maxDist)},${Math.floor(p.y/maxDist)}`;
-                if (!grid.has(key)) grid.set(key, []);
-                grid.get(key).push(i);
-            }
-
-            lineConnections = [];
-            for (const [key, cell] of grid) {
-                const [cx, cy] = key.split(',').map(Number);
-                for (let dx = -1; dx <= 1; dx++) {
-                    for (let dy = -1; dy <= 1; dy++) {
-                        const nCell = grid.get(`${cx+dx},${cy+dy}`);
-                        if (!nCell) continue;
-                        for (const i of cell) {
-                            for (const j of nCell) {
-                                if (j <= i) continue;
-                                const pi = homePositions[i], pj = homePositions[j];
-                                const ddx = pi.x-pj.x, ddy = pi.y-pj.y, ddz = pi.z-pj.z;
-                                if (ddx*ddx + ddy*ddy + ddz*ddz < maxDistSq) {
-                                    lineConnections.push(i, j);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            const numConns = lineConnections.length / 2;
-            if (numConns === 0) return;
-
-            const lPos = new Float32Array(numConns * 6);
-            for (let c = 0; c < numConns; c++) {
-                const pi = homePositions[lineConnections[c*2]];
-                const pj = homePositions[lineConnections[c*2+1]];
-                const li = c * 6;
-                lPos[li]=pi.x; lPos[li+1]=pi.y; lPos[li+2]=pi.z;
-                lPos[li+3]=pj.x; lPos[li+4]=pj.y; lPos[li+5]=pj.z;
-            }
-
-            const lineGeo = new THREE.BufferGeometry();
-            lineGeo.setAttribute('position', new THREE.BufferAttribute(lPos, 3));
-            linePosAttr = lineGeo.attributes.position;
-
-            lineMesh = new THREE.LineSegments(lineGeo, new THREE.LineBasicMaterial({
-                color: 0xffffff, transparent: true, opacity: 0.1,
-                blending: THREE.AdditiveBlending,
-            }));
-            lineMesh.visible = state.mode === 'mesh';
-            scene.add(lineMesh);
-        }
-
-        // ═══════════════════════════════════════════════════════
-        //  3D EXTRUSION SYSTEM
-        // ═══════════════════════════════════════════════════════
-        let textMesh, textOrigPositions;
-
-        function buildExtrusion(text) {
-            if (textMesh) { scene.remove(textMesh); textMesh = null; }
-            if (!state.font) return;
-
-            const geo = new TextGeometry(text, {
-                font: state.font,
-                size: 3.5,
-                depth: 1.5,
-                curveSegments: 8,
-                bevelEnabled: true,
-                bevelThickness: 0.1,
-                bevelSize: 0.05,
-                bevelSegments: 3,
-            });
-            geo.computeBoundingBox();
-            geo.center();
-            textOrigPositions = new Float32Array(geo.attributes.position.array);
-
-            textMesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-                color: 0xeeeeee,
-                metalness: 0.1,
-                roughness: 0.55,
-            }));
-            textMesh.visible = state.mode === 'extrusion';
-            scene.add(textMesh);
-        }
-
-        // ═══════════════════════════════════════════════════════
-        //  MASTER REBUILD
-        // ═══════════════════════════════════════════════════════
-        function rebuildAll(text, scatter) {
-            state.currentText = text;
-            buildParticles(text, scatter);
-            buildConnections();
-            buildExtrusion(text);
-            applyModeVisibility();
-        }
-
-        function applyModeVisibility() {
-            if (particleSystem) particleSystem.visible = state.mode !== 'extrusion';
-            if (lineMesh) lineMesh.visible = state.mode === 'mesh';
-            if (textMesh) textMesh.visible = state.mode === 'extrusion';
-        }
-
-        function switchMode(mode) {
-            state.mode = mode;
-            applyModeVisibility();
-            document.querySelectorAll('.mode-btn').forEach(b =>
-                b.classList.toggle('active', b.dataset.mode === mode)
-            );
-        }
-
-        // Initial build
-        rebuildAll('MOTION', false);
-
-        // ═══════════════════════════════════════════════════════
-        //  DOM REFS + EVENT HANDLERS
-        // ═══════════════════════════════════════════════════════
-        const statusEl = document.getElementById('status');
-        const textInput = document.getElementById('text-input');
-        const handCanvas = document.getElementById('hand-canvas');
-        const handCtx = handCanvas.getContext('2d');
-        const gestureItems = document.querySelectorAll('.gesture-item');
-
-        let rebuildTimer;
-        textInput.addEventListener('input', () => {
-            clearTimeout(rebuildTimer);
-            rebuildTimer = setTimeout(() => {
-                const val = textInput.value.toUpperCase().trim() || 'MOTION';
-                const pos = particleSystem ? particleSystem.position.clone() : new THREE.Vector3();
-                const scl = particleSystem ? particleSystem.scale.x : 1;
-                rebuildAll(val, true);
-                if (particleSystem) { particleSystem.position.copy(pos); particleSystem.scale.setScalar(scl); }
-                if (textMesh) { textMesh.position.copy(pos); textMesh.scale.setScalar(scl); }
-            }, 300);
-        });
-
-        document.querySelectorAll('.mode-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                if (btn.dataset.mode === 'extrusion' && !state.font) return;
-                switchMode(btn.dataset.mode);
-            });
-        });
-
-        // ═══════════════════════════════════════════════════════
-        //  COORDINATE MAPPING
-        // ═══════════════════════════════════════════════════════
-        function landmarkToWorld(lm) {
-            return new THREE.Vector3(-(lm.x-0.5)*32, -(lm.y-0.5)*24, -lm.z*15);
-        }
-
-        // ═══════════════════════════════════════════════════════
-        //  HAND SKELETON
-        // ═══════════════════════════════════════════════════════
-        const CONNECTIONS = [
-            [0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],
-            [0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],
-            [0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17],
-        ];
-        const TIPS = new Set([4,8,12,16,20]);
-
-        function drawHandSkeleton(lm) {
-            const w = handCanvas.width, h = handCanvas.height;
-            handCtx.clearRect(0, 0, w, h);
-            if (!lm) {
-                handCtx.fillStyle = 'rgba(255,255,255,0.08)';
-                handCtx.font = '10px Helvetica';
-                handCtx.textAlign = 'center';
-                handCtx.fillText('NO INPUT', w/2, h/2);
-                return;
-            }
-            handCtx.strokeStyle = 'rgba(255,255,255,0.2)';
-            handCtx.lineWidth = 1;
-            for (const [a,b] of CONNECTIONS) {
-                handCtx.beginPath();
-                handCtx.moveTo((1-lm[a].x)*w, lm[a].y*h);
-                handCtx.lineTo((1-lm[b].x)*w, lm[b].y*h);
-                handCtx.stroke();
-            }
-            for (let i = 0; i < lm.length; i++) {
-                handCtx.beginPath();
-                handCtx.arc((1-lm[i].x)*w, lm[i].y*h, TIPS.has(i)?3:1.5, 0, Math.PI*2);
-                handCtx.fillStyle = TIPS.has(i) ? '#4CBB17' : 'rgba(255,255,255,0.5)';
-                handCtx.fill();
-            }
-        }
-        drawHandSkeleton(null);
-
-        function updateGestureUI(g) {
-            gestureItems.forEach(el => el.classList.toggle('active', el.dataset.gesture === g));
-        }
-
-        // ═══════════════════════════════════════════════════════
-        //  HAND TRACKING
-        // ═══════════════════════════════════════════════════════
-        function initHandTracking() {
-            const videoEl = document.getElementById('webcam');
-            const hands = new Hands({
-                locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${f}`,
-            });
-            hands.setOptions({
-                maxNumHands: 1, modelComplexity: 1,
-                minDetectionConfidence: 0.7, minTrackingConfidence: 0.5,
-            });
-            hands.onResults(results => {
-                if (results.multiHandLandmarks?.length > 0) {
-                    const lm = results.multiHandLandmarks[0];
-                    state.handData = lm;
-                    drawHandSkeleton(lm);
-                    processHand(lm);
-                    statusEl.className = 'st-active';
-                    statusEl.textContent = 'Tracking';
-                } else {
-                    state.handData = null;
-                    state.gesture = 'none';
-                    updateGestureUI('none');
-                    drawHandSkeleton(null);
-                    statusEl.className = 'st-ready';
-                    statusEl.textContent = 'Ready';
-                }
-            });
-            const cam = new Camera(videoEl, {
-                onFrame: async () => { await hands.send({ image: videoEl }); },
-                width: 320, height: 240,
-            });
-            cam.start().then(() => {
-                statusEl.className = 'st-ready';
-                statusEl.textContent = 'Ready';
-            }).catch(() => {
-                statusEl.textContent = 'No Camera';
-            });
-        }
-
-        // ═══════════════════════════════════════════════════════
-        //  GESTURE PROCESSING
-        // ═══════════════════════════════════════════════════════
-        function processHand(lm) {
-            state.indexTip3D.copy(landmarkToWorld(lm[8]));
-            state.thumbTip3D.copy(landmarkToWorld(lm[4]));
-            state.palmPos3D.copy(landmarkToWorld(lm[9]));
-            state.smoothedIndex.lerp(state.indexTip3D, CONFIG.cursorSmoothing);
-            state.smoothedPalm.lerp(state.palmPos3D, CONFIG.cursorSmoothing);
-
-            const pinchDist = Math.sqrt(
-                (lm[4].x-lm[8].x)**2 + (lm[4].y-lm[8].y)**2 + (lm[4].z-lm[8].z)**2
-            );
-            state.pinchDistance = pinchDist;
-
-            const indexUp  = lm[8].y  < lm[6].y;
-            const middleUp = lm[12].y < lm[10].y;
-            const ringUp   = lm[16].y < lm[14].y;
-            const pinkyUp  = lm[20].y < lm[18].y;
-            const ext = [indexUp, middleUp, ringUp, pinkyUp].filter(Boolean).length;
-
-            // Finger spread for open-hand scale control
-            state.fingerSpread = Math.sqrt(
-                (lm[4].x-lm[20].x)**2 + (lm[4].y-lm[20].y)**2
-            );
-
-            state.prevGesture = state.gesture;
-            if (pinchDist < CONFIG.pinchThreshold) state.gesture = 'pinch';
-            else if (ext === 1 && indexUp) state.gesture = 'point';
-            else if (ext === 2 && indexUp && middleUp) state.gesture = 'peace';
-            else if (ext >= 3) state.gesture = 'open';
-            else if (ext <= 1) state.gesture = 'grab';
-            else state.gesture = 'none';
-
-            updateGestureUI(state.gesture);
-            applyGesture();
-        }
-
-        function applyGesture() {
-            switch (state.gesture) {
-                case 'pinch': {
-                    const mid = new THREE.Vector3().lerpVectors(
-                        state.smoothedIndex, state.thumbTip3D, 0.5
-                    );
-                    state.pinchMidpoint3D.lerp(mid, CONFIG.cursorSmoothing);
-                    break;
-                }
-                case 'open': {
-                    if (state.prevGesture !== 'open')
-                        state.dragOffset.copy((state.mode === 'extrusion' ? textMesh : particleSystem)?.position || new THREE.Vector3()).sub(state.smoothedPalm);
-                    state.targetPosition.copy(state.smoothedPalm).add(state.dragOffset);
-                    // Finger spread → scale (spread 0.12–0.38 maps to 0.5–2.0)
-                    const sn = THREE.MathUtils.clamp((state.fingerSpread - 0.12) / 0.26, 0, 1);
-                    state.targetScale = 0.5 + sn * 1.5;
-                    break;
-                }
-                case 'peace': {
-                    state.targetRotationY = (state.smoothedIndex.x / 12) * Math.PI * 0.8;
-                    break;
-                }
-            }
-        }
-
-        // ═══════════════════════════════════════════════════════
-        //  ANIMATION LOOP
-        // ═══════════════════════════════════════════════════════
-        const clock = new THREE.Clock();
-        const _lc = new THREE.Vector3();
-        const _pl = new THREE.Vector3();
-
-        function animate() {
-            requestAnimationFrame(animate);
-            const t = clock.getElapsedTime();
-
-            const hasHand = !!state.handData;
-            const gesture = state.gesture;
-            const pushing    = hasHand && gesture === 'point';
-            const attracting = hasHand && gesture === 'grab';
-            const pinching   = hasHand && gesture === 'pinch';
-            const interacting = pushing || attracting;
-
-            // ── Active object transforms ─────────────────────
-            const activeObj = state.mode === 'extrusion' ? textMesh : particleSystem;
-            if (!activeObj) { composer.render(); return; }
-
-            activeObj.scale.setScalar(
-                THREE.MathUtils.lerp(activeObj.scale.x, state.targetScale, CONFIG.scaleSmoothing)
-            );
-            activeObj.position.lerp(state.targetPosition, CONFIG.positionSmoothing);
-            activeObj.rotation.y += (state.targetRotationY - activeObj.rotation.y) * CONFIG.rotationSmoothing;
-
-            // Cursor in local space
-            const invScale = 1 / activeObj.scale.x;
-            _lc.copy(state.smoothedIndex).sub(activeObj.position).multiplyScalar(invScale);
-            const cx = _lc.x, cy = _lc.y, cz = _lc.z;
-
-            // Pinch grab point in local space
-            let plx = 0, ply = 0, plz = 0;
-            if (pinching) {
-                _pl.copy(state.pinchMidpoint3D).sub(activeObj.position).multiplyScalar(invScale);
-                plx = _pl.x; ply = _pl.y; plz = _pl.z;
-            }
-
-            // ── PARTICLES + MESH MODE ────────────────────────
-            if (state.mode !== 'extrusion' && posAttr) {
-                const pArr = posAttr.array;
-                for (let i = 0; i < particleCount; i++) {
-                    const home = homePositions[i];
-                    let px = home.x, py = home.y, pz = home.z;
-
-                    if (interacting) {
-                        const dx = px-cx, dy = py-cy, dz = pz-cz;
-                        const distSq = dx*dx + dy*dy + dz*dz;
-                        if (distSq < CONFIG.pushRadiusSq) {
-                            const dist = Math.sqrt(distSq);
-                            const inv = 1/(dist+0.001);
-                            const prox = 1 - dist/CONFIG.pushRadius;
-                            const force = prox * (pushing ? CONFIG.pushStrength : CONFIG.attractStrength);
-                            const sign = pushing ? 1 : -1;
-                            px += dx*inv*force*sign;
-                            py += dy*inv*force*sign;
-                            pz += dz*inv*force*sign;
-                        }
-                    }
-
-                    if (pinching) {
-                        const thx = plx - home.x;
-                        const thy = ply - home.y;
-                        const thz = plz - home.z;
-                        const dSq = thx*thx + thy*thy + thz*thz;
-                        if (dSq < CONFIG.grabRadiusSq) {
-                            const d = Math.sqrt(dSq);
-                            const inf = (1 - d / CONFIG.grabRadius) ** 2;
-                            px = home.x + thx * inf * CONFIG.grabStrength;
-                            py = home.y + thy * inf * CONFIG.grabStrength;
-                            pz = home.z + thz * inf * CONFIG.grabStrength;
-                        }
-                    }
-
-                    px += Math.sin(t*1.5 + randoms[i]) * 0.04;
-                    py += Math.cos(t*1.2 + randoms[i]) * 0.04;
-
-                    const ci = i*3;
-                    pArr[ci]   += (px - pArr[ci])   * CONFIG.returnSpeed;
-                    pArr[ci+1] += (py - pArr[ci+1]) * CONFIG.returnSpeed;
-                    pArr[ci+2] += (pz - pArr[ci+2]) * CONFIG.returnSpeed;
-                }
-                posAttr.needsUpdate = true;
-
-                // Sync mesh connections
-                if (state.mode === 'mesh' && lineMesh && lineConnections.length > 0) {
-                    lineMesh.position.copy(activeObj.position);
-                    lineMesh.scale.copy(activeObj.scale);
-                    lineMesh.rotation.copy(activeObj.rotation);
-
-                    const lArr = linePosAttr.array;
-                    const numC = lineConnections.length / 2;
-                    for (let c = 0; c < numC; c++) {
-                        const ii = lineConnections[c*2]*3;
-                        const jj = lineConnections[c*2+1]*3;
-                        const li = c*6;
-                        lArr[li]=pArr[ii]; lArr[li+1]=pArr[ii+1]; lArr[li+2]=pArr[ii+2];
-                        lArr[li+3]=pArr[jj]; lArr[li+4]=pArr[jj+1]; lArr[li+5]=pArr[jj+2];
-                    }
-                    linePosAttr.needsUpdate = true;
-                }
-            }
-
-            // ── EXTRUSION MODE ───────────────────────────────
-            if (state.mode === 'extrusion' && textMesh && textOrigPositions) {
-                const tGeo = textMesh.geometry;
-                const tArr = tGeo.attributes.position.array;
-                const len = tArr.length;
-                let deformed = false;
-
-                for (let i = 0; i < len; i += 3) {
-                    let px = textOrigPositions[i];
-                    let py = textOrigPositions[i+1];
-                    let pz = textOrigPositions[i+2];
-
-                    if (interacting) {
-                        const dx = px-cx, dy = py-cy, dz = pz-cz;
-                        const distSq = dx*dx + dy*dy + dz*dz;
-                        if (distSq < CONFIG.pushRadiusSq) {
-                            const dist = Math.sqrt(distSq);
-                            const inv = 1/(dist+0.001);
-                            const prox = 1 - dist/CONFIG.pushRadius;
-                            const force = prox * (pushing ? CONFIG.pushStrength : CONFIG.attractStrength) * CONFIG.extrusionForceScale;
-                            const sign = pushing ? 1 : -1;
-                            px += dx*inv*force*sign;
-                            py += dy*inv*force*sign;
-                            pz += dz*inv*force*sign;
-                            deformed = true;
-                        }
-                    }
-
-                    if (pinching) {
-                        const thx = plx - px;
-                        const thy = ply - py;
-                        const thz = plz - pz;
-                        const dSq = thx*thx + thy*thy + thz*thz;
-                        if (dSq < CONFIG.grabRadiusSq) {
-                            const d = Math.sqrt(dSq);
-                            const inf = (1 - d / CONFIG.grabRadius) ** 2;
-                            px += thx * inf * CONFIG.grabStrength * 0.6;
-                            py += thy * inf * CONFIG.grabStrength * 0.6;
-                            pz += thz * inf * CONFIG.grabStrength * 0.6;
-                            deformed = true;
-                        }
-                    }
-
-                    tArr[i]   += (px - tArr[i])   * CONFIG.returnSpeed;
-                    tArr[i+1] += (py - tArr[i+1]) * CONFIG.returnSpeed;
-                    tArr[i+2] += (pz - tArr[i+2]) * CONFIG.returnSpeed;
-                }
-
-                tGeo.attributes.position.needsUpdate = true;
-                if (deformed) tGeo.computeVertexNormals();
-            }
-
-            // ── Idle ─────────────────────────────────────────
-            if (!hasHand) {
-                activeObj.rotation.y = Math.sin(t * 0.3) * 0.06;
-                state.targetScale = 1;
-                state.targetPosition.lerp(new THREE.Vector3(0,0,0), 0.01);
-                state.targetRotationY = 0;
-            }
-
-            // ── Cursor ───────────────────────────────────────
-            const ct = hasHand ? 0.35 : 0;
-            cursorMat.opacity += (ct - cursorMat.opacity) * 0.15;
-            ringMat.opacity += (ct*0.5 - ringMat.opacity) * 0.15;
-            if (hasHand) {
-                cursorGroup.position.lerp(state.smoothedIndex, 0.35);
-                cursorRing.rotation.z = t * 1.5;
-                cursorRing.scale.setScalar(
-                    gesture === 'pinch' ? 0.4 : gesture === 'grab' ? 1.8 : 1 + Math.sin(t*3)*0.08
-                );
-            }
-
-            composer.render();
-        }
-        animate();
-
-        // ═══════════════════════════════════════════════════════
-        //  RESIZE
-        // ═══════════════════════════════════════════════════════
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            composer.setSize(window.innerWidth, window.innerHeight);
-        });
-
-        // ═══════════════════════════════════════════════════════
-        //  LOAD FONT + START
-        // ═══════════════════════════════════════════════════════
-        new FontLoader().load(
-            'https://cdn.jsdelivr.net/npm/three@0.170.0/examples/fonts/helvetiker_bold.typeface.json',
-            font => {
-                state.font = font;
-                buildExtrusion(state.currentText);
-                // Enable extrusion button visually
-                document.querySelector('[data-mode="extrusion"]').style.opacity = '1';
-            }
-        );
-        // Dim extrusion button until font loads
-        document.querySelector('[data-mode="extrusion"]').style.opacity = '0.3';
-
-        initHandTracking();
-    </script>
 </body>
 </html>

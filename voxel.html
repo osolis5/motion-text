@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxels</title>
+    <meta name="description" content="Gesture-reactive voxel typography — circular field of cubes controlled by hand tracking">
+    <meta name="theme-color" content="#08080f">
+
+    <!-- Anton display + IBM Plex Mono for poster overlay labels -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Anton&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <!-- Shared poster systems -->
+    <script src="poster-system.js"></script>
+    <script src="projection-mapping.js"></script>
+
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            background: #08080f;
+            overflow: hidden;
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            color: #fff;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Poster stage — centered 11:15 canvas with box-shadow */
+        #stage {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #sketch {
+            position: relative;
+            box-shadow: 0 30px 120px rgba(0, 0, 0, 0.55);
+        }
+        #sketch canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        #three-canvas { z-index: 1; }
+        #overlay-canvas {
+            z-index: 2;
+            pointer-events: none;
+        }
+
+        /* UI panels */
+        .ui-panel {
+            position: fixed;
+            z-index: 100;
+            pointer-events: none;
+        }
+        .ui-panel > * { pointer-events: auto; }
+
+        /* Back link */
+        .back {
+            position: fixed;
+            top: 22px;
+            left: 24px;
+            z-index: 110;
+            font-size: 9px;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.25);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+        .back:hover { color: rgba(255, 255, 255, 0.6); }
+
+        /* Left panel */
+        #ui-left {
+            top: 60px;
+            left: 24px;
+            width: 210px;
+        }
+        .ui-title {
+            font-size: 28px;
+            font-weight: 700;
+            line-height: 1.0;
+            letter-spacing: -0.5px;
+            margin-bottom: 4px;
+        }
+        .ui-subtitle {
+            font-size: 9px;
+            font-weight: 400;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.3);
+            margin-bottom: 22px;
+        }
+        .ui-divider {
+            width: 100%;
+            height: 1px;
+            background: rgba(255, 255, 255, 0.1);
+            margin: 16px 0;
+        }
+        .ui-label {
+            font-size: 9px;
+            font-weight: 500;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.25);
+            margin-bottom: 10px;
+        }
+
+        /* Text input — cornflower-blue focus accent (voxels' identity) */
+        #text-input {
+            width: 100%;
+            background: none;
+            border: none;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+            color: #fff;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 500;
+            letter-spacing: 2px;
+            padding: 4px 0 8px;
+            outline: none;
+            text-transform: uppercase;
+            transition: border-bottom-color 0.25s;
+            -webkit-appearance: none;
+            appearance: none;
+            border-radius: 0;
+        }
+        #text-input:focus { border-bottom-color: #6495ED; }
+        #text-input::placeholder { color: rgba(255, 255, 255, 0.12); }
+
+        /* Gesture list */
+        .gesture-list {
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+        }
+        .gesture-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 10px;
+            letter-spacing: 1.5px;
+            color: rgba(255, 255, 255, 0.32);
+            transition: color 0.2s;
+        }
+        .gesture-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.12);
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+        .gesture-desc {
+            font-size: 8px;
+            color: rgba(255, 255, 255, 0.2);
+            margin-left: auto;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+        }
+        .gesture-item.active { color: #6495ED; }
+        .gesture-item.active .gesture-dot {
+            background: #6495ED;
+            box-shadow: 0 0 10px rgba(100, 149, 237, 0.6);
+        }
+        .gesture-item.active .gesture-desc { color: rgba(100, 149, 237, 0.55); }
+
+        /* Right panel — hand tracking preview */
+        #ui-right {
+            top: 60px;
+            right: 24px;
+        }
+        #hand-canvas {
+            display: block;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.02);
+            width: 240px;
+            height: 180px;
+        }
+
+        /* Bottom bar */
+        #ui-bottom {
+            bottom: 22px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            font-size: 9px;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+        }
+        #status {
+            color: rgba(255, 255, 255, 0.3);
+            padding: 5px 10px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        #status.st-loading { color: rgba(255,255,255,0.3); border-color: rgba(255,255,255,0.1); }
+        #status.st-ready { color: rgba(100, 149, 237, 0.8); border-color: rgba(100, 149, 237, 0.3); }
+        #status.st-active { color: #6495ED; border-color: rgba(100, 149, 237, 0.5); }
+        #status.st-error { color: rgba(255, 100, 100, 0.8); border-color: rgba(255, 100, 100, 0.3); }
+
+        #hud-keys {
+            color: rgba(255,255,255,0.22);
+            white-space: nowrap;
+        }
+        #hud-keys b {
+            color: rgba(255,255,255,0.45);
+            font-weight: 400;
+            margin-right: 2px;
+        }
+        #hud-keys .sep {
+            opacity: 0.35;
+            margin: 0 8px;
+        }
+        #version {
+            color: rgba(255,255,255,0.15);
+        }
+
+        #webcam { display: none; }
+    </style>
+</head>
+<body>
+    <a href="index.html" class="back">&larr; Back</a>
+
+    <div id="stage">
+        <div id="sketch">
+            <canvas id="three-canvas"></canvas>
+            <canvas id="overlay-canvas"></canvas>
+        </div>
+    </div>
+
+    <video id="webcam" autoplay playsinline></video>
+
+    <div id="ui-left" class="ui-panel">
+        <div class="ui-title">Voxels</div>
+        <div class="ui-subtitle">Experiment 02 — Gesture-Reactive Field</div>
+        <div class="ui-divider"></div>
+
+        <div class="ui-label">Text</div>
+        <input id="text-input" type="text" value="FLUX" maxlength="12" spellcheck="false" autocomplete="off">
+        <div class="ui-divider"></div>
+
+        <div class="ui-label">Gestures</div>
+        <div class="gesture-list">
+            <div class="gesture-item" data-gesture="point">
+                <span class="gesture-dot"></span>Point <span class="gesture-desc">Raise</span>
+            </div>
+            <div class="gesture-item" data-gesture="pinch">
+                <span class="gesture-dot"></span>Pinch <span class="gesture-desc">Lift</span>
+            </div>
+            <div class="gesture-item" data-gesture="open">
+                <span class="gesture-dot"></span>Open <span class="gesture-desc">Push</span>
+            </div>
+            <div class="gesture-item" data-gesture="grab">
+                <span class="gesture-dot"></span>Grab <span class="gesture-desc">Vortex</span>
+            </div>
+            <div class="gesture-item" data-gesture="peace">
+                <span class="gesture-dot"></span>Peace <span class="gesture-desc">Ripple</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="ui-right" class="ui-panel">
+        <div class="ui-label">Tracking</div>
+        <canvas id="hand-canvas" width="240" height="180"></canvas>
+    </div>
+
+    <div id="ui-bottom" class="ui-panel">
+        <div id="status" class="st-loading">Loading</div>
+        <div id="hud-keys">
+            <b>H</b> Overlay
+            <span class="sep">·</span>
+            <b>P</b> Project
+            <span class="sep">·</span>
+            <b>S</b> Save
+        </div>
+        <div id="version">v1.1</div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js" crossorigin="anonymous"></script>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        // ═══════════════════════════════════════════════════════
+        //  POSTER GEOMETRY
+        // ═══════════════════════════════════════════════════════
+        // 11:15 portrait — matches the other posters in the series.
+        const POSTER_W = 660;
+        const POSTER_H = 900;
+        let overlayHidden = false;
+
+        // ═══════════════════════════════════════════════════════
+        //  CONFIG
+        // ═══════════════════════════════════════════════════════
+        const CONFIG = {
+            // Grid now rectangular + large so the voxel field fills
+            // the entire poster background (was circular R=13).
+            gridHalfX: 26,       // half-extent in grid cells (x)
+            gridHalfZ: 30,       // half-extent in grid cells (z)
+            gridSpacing: 0.55,
+            voxelSize: 0.38,
+            textElevation: 0.5,
+
+            springK: 0.09,
+            damping: 0.84,
+
+            pointRadius: 4.5,
+            pointStrength: 1.8,
+            openRadius: 6,
+            openDownStrength: 1.5,
+            openOutStrength: 1,
+            pinchRadius: 2.5,
+            pinchStrength: 2.5,
+            grabRadius: 5.5,
+            grabSwirlStrength: 1.2,
+            grabLiftStrength: 1,
+            rippleSpeed: 6,
+            rippleFreq: 0.7,
+            rippleStrength: 0.9,
+
+            cursorSmoothing: 0.55,
+            bloomStrength: 0.45,
+            bloomRadius: 0.35,
+            bloomThreshold: 0.82,
+            pinchThreshold: 0.1,
+        };
+
+        // ═══════════════════════════════════════════════════════
+        //  STATE
+        // ═══════════════════════════════════════════════════════
+        const state = {
+            word: 'FLUX',
+            handData: null,
+            gesture: 'none',
+            prevGesture: 'none',
+            pinchDistance: 1,
+            smoothedHand: new THREE.Vector3(),
+            smoothedPalm: new THREE.Vector3(),
+            pinchMid: new THREE.Vector3(),
+            ripples: [],
+            lastRippleTime: 0,
+        };
+
+        // ═══════════════════════════════════════════════════════
+        //  THREE.JS SCENE
+        // ═══════════════════════════════════════════════════════
+        const canvas = document.getElementById('three-canvas');
+        canvas.width = POSTER_W;
+        canvas.height = POSTER_H;
+
+        const overlayCanvas = document.getElementById('overlay-canvas');
+        overlayCanvas.width = POSTER_W;
+        overlayCanvas.height = POSTER_H;
+        const overlayCtx = overlayCanvas.getContext('2d');
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x08080f);
+        scene.fog = new THREE.FogExp2(0x08080f, 0.012);
+
+        // Portrait aspect — camera pushed further back and tilted
+        // down so the enlarged rectangular voxel grid fills the
+        // 660×900 frame from corner to corner.
+        const camera = new THREE.PerspectiveCamera(52, POSTER_W / POSTER_H, 0.1, 500);
+        camera.position.set(0, 22, 24);
+        camera.lookAt(0, 0, 0);
+
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+        renderer.setSize(POSTER_W, POSTER_H, false); // false = don't touch CSS
+        renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.4;
+
+        const composer = new EffectComposer(renderer);
+        composer.addPass(new RenderPass(scene, camera));
+        composer.addPass(new UnrealBloomPass(
+            new THREE.Vector2(POSTER_W, POSTER_H),
+            CONFIG.bloomStrength, CONFIG.bloomRadius, CONFIG.bloomThreshold
+        ));
+
+        // Fit the #sketch div to the viewport while preserving
+        // 11:15 — canvases inside inherit the size via CSS 100%.
+        function fitToViewport() {
+            const ratio = POSTER_W / POSTER_H;
+            const vw = window.innerWidth;
+            const vh = window.innerHeight;
+            let cw, ch;
+            if (vw / vh > ratio) {
+                ch = vh * 0.92;
+                cw = ch * ratio;
+            } else {
+                cw = vw * 0.90;
+                ch = cw / ratio;
+            }
+            const sketch = document.getElementById('sketch');
+            if (sketch) {
+                sketch.style.width = cw + 'px';
+                sketch.style.height = ch + 'px';
+            }
+        }
+        fitToViewport();
+
+        // Lighting
+        scene.add(new THREE.AmbientLight(0x222233, 0.8));
+        const keyLight = new THREE.DirectionalLight(0xffffff, 0.9);
+        keyLight.position.set(8, 15, 10);
+        scene.add(keyLight);
+        const fillLight = new THREE.DirectionalLight(0x3344aa, 0.3);
+        fillLight.position.set(-10, 5, -5);
+        scene.add(fillLight);
+
+        const handLight = new THREE.PointLight(0xeeffee, 0, 18, 1.5);
+        handLight.position.set(0, 6, 0);
+        scene.add(handLight);
+
+        // Subtle ground grid
+        const groundGrid = new THREE.GridHelper(60, 30, 0x0c0c14, 0x0a0a10);
+        groundGrid.position.y = -0.5;
+        scene.add(groundGrid);
+
+        // ═══════════════════════════════════════════════════════
+        //  CURSOR
+        // ═══════════════════════════════════════════════════════
+        const cursorMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0 });
+        const cursorDot = new THREE.Mesh(new THREE.SphereGeometry(0.18, 10, 10), cursorMat);
+        const ringMat = new THREE.MeshBasicMaterial({
+            color: 0xffffff, transparent: true, opacity: 0, side: THREE.DoubleSide,
+        });
+        const cursorRing = new THREE.Mesh(new THREE.RingGeometry(0.4, 0.47, 24), ringMat);
+        const cursorGroup = new THREE.Group();
+        cursorGroup.add(cursorDot);
+        cursorGroup.add(cursorRing);
+        scene.add(cursorGroup);
+
+        // ═══════════════════════════════════════════════════════
+        //  VOXEL GRID SYSTEM
+        // ═══════════════════════════════════════════════════════
+        const textCanvas = document.createElement('canvas');
+        const tCtx = textCanvas.getContext('2d');
+        textCanvas.width = 512;
+        textCanvas.height = 512;
+
+        let voxelCount = 0;
+        let homes, offsets, vels, textFlags;
+        let voxelMesh;
+
+        const tempColor = new THREE.Color();
+        const _pos = new THREE.Vector3();
+        const _quat = new THREE.Quaternion();
+        const _scale = new THREE.Vector3(1, 1, 1);
+        const _mat = new THREE.Matrix4();
+
+        function buildGrid(animate) {
+            if (voxelMesh) { scene.remove(voxelMesh); voxelMesh.geometry.dispose(); }
+
+            const HX = CONFIG.gridHalfX;
+            const HZ = CONFIG.gridHalfZ;
+            const sp = CONFIG.gridSpacing;
+
+            // Rectangular grid — no text masking, no circular
+            // clipping. The voxel field is the poster background;
+            // text is drawn on the 2D overlay canvas above it.
+            const positions = [];
+            for (let ix = -HX; ix <= HX; ix++) {
+                for (let iz = -HZ; iz <= HZ; iz++) {
+                    positions.push({ x: ix * sp, z: iz * sp });
+                }
+            }
+
+            voxelCount = positions.length;
+            homes = new Float32Array(voxelCount * 3);
+            offsets = new Float32Array(voxelCount * 3);
+            vels = new Float32Array(voxelCount * 3);
+            textFlags = new Uint8Array(voxelCount); // kept for compat, unused
+
+            for (let i = 0; i < voxelCount; i++) {
+                const p = positions[i];
+                homes[i * 3] = p.x;
+                homes[i * 3 + 1] = 0;
+                homes[i * 3 + 2] = p.z;
+                textFlags[i] = 0;
+
+                if (animate) {
+                    offsets[i * 3] = (Math.random() - 0.5) * 4;
+                    offsets[i * 3 + 1] = -2 - Math.random() * 3;
+                    offsets[i * 3 + 2] = (Math.random() - 0.5) * 4;
+                    vels[i * 3 + 1] = Math.random() * 0.2;
+                }
+            }
+
+            // InstancedMesh
+            const boxGeo = new THREE.SphereGeometry(CONFIG.voxelSize * 0.5, 8, 6);
+            const boxMat = new THREE.MeshStandardMaterial({
+                metalness: 0.15,
+                roughness: 0.65,
+            });
+            voxelMesh = new THREE.InstancedMesh(boxGeo, boxMat, voxelCount);
+            voxelMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+
+            // Uniform dark base color — displacement-driven color
+            // shift is still applied in the animate loop so gestures
+            // still push voxels from cornflower blue → Klein blue.
+            for (let i = 0; i < voxelCount; i++) {
+                const i3 = i * 3;
+                _pos.set(homes[i3] + offsets[i3], offsets[i3 + 1], homes[i3 + 2] + offsets[i3 + 2]);
+                _mat.compose(_pos, _quat, _scale);
+                voxelMesh.setMatrixAt(i, _mat);
+                tempColor.setRGB(0.09, 0.10, 0.16);
+                voxelMesh.setColorAt(i, tempColor);
+            }
+            voxelMesh.instanceColor.needsUpdate = true;
+            scene.add(voxelMesh);
+        }
+
+        // Initial build with entrance animation
+        buildGrid(true);
+
+        // ═══════════════════════════════════════════════════════
+        //  DOM + EVENTS
+        // ═══════════════════════════════════════════════════════
+        const statusEl = document.getElementById('status');
+        const textInput = document.getElementById('text-input');
+        const handCanvas = document.getElementById('hand-canvas');
+        const handCtx = handCanvas.getContext('2d');
+        const gestureItems = document.querySelectorAll('.gesture-item');
+
+        // The text input now only updates the overlay text — the
+        // voxel grid is background and doesn't need rebuilding.
+        let textUpdateTimer;
+        textInput.addEventListener('input', () => {
+            clearTimeout(textUpdateTimer);
+            textUpdateTimer = setTimeout(() => {
+                const val = textInput.value.toUpperCase().trim() || 'FLUX';
+                state.word = val;
+            }, 150);
+        });
+
+        // ═══════════════════════════════════════════════════════
+        //  HAND SKELETON DRAWING
+        // ═══════════════════════════════════════════════════════
+        const CONNECTIONS = [
+            [0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],
+            [0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],
+            [0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17],
+        ];
+        const TIPS = new Set([4, 8, 12, 16, 20]);
+
+        function drawHandSkeleton(lm) {
+            const w = handCanvas.width, h = handCanvas.height;
+            handCtx.clearRect(0, 0, w, h);
+            if (!lm) {
+                handCtx.fillStyle = 'rgba(255,255,255,0.08)';
+                handCtx.font = '10px Helvetica';
+                handCtx.textAlign = 'center';
+                handCtx.fillText('NO INPUT', w / 2, h / 2);
+                return;
+            }
+            handCtx.strokeStyle = 'rgba(255,255,255,0.2)';
+            handCtx.lineWidth = 1;
+            for (const [a, b] of CONNECTIONS) {
+                handCtx.beginPath();
+                handCtx.moveTo((1 - lm[a].x) * w, lm[a].y * h);
+                handCtx.lineTo((1 - lm[b].x) * w, lm[b].y * h);
+                handCtx.stroke();
+            }
+            for (let i = 0; i < lm.length; i++) {
+                handCtx.beginPath();
+                handCtx.arc((1 - lm[i].x) * w, lm[i].y * h, TIPS.has(i) ? 3 : 1.5, 0, Math.PI * 2);
+                handCtx.fillStyle = TIPS.has(i) ? '#4CBB17' : 'rgba(255,255,255,0.5)';
+                handCtx.fill();
+            }
+        }
+        drawHandSkeleton(null);
+
+        function updateGestureUI(g) {
+            gestureItems.forEach(el => el.classList.toggle('active', el.dataset.gesture === g));
+        }
+
+        // ═══════════════════════════════════════════════════════
+        //  COORDINATE MAPPING
+        // ═══════════════════════════════════════════════════════
+        function landmarkToWorld(lm) {
+            return new THREE.Vector3(
+                -(lm.x - 0.5) * 34,
+                -lm.z * 8 + 4,
+                -(lm.y - 0.5) * 28
+            );
+        }
+
+        // ═══════════════════════════════════════════════════════
+        //  HAND TRACKING
+        // ═══════════════════════════════════════════════════════
+        function initHandTracking() {
+            const videoEl = document.getElementById('webcam');
+            const hands = new Hands({
+                locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${f}`,
+            });
+            hands.setOptions({
+                maxNumHands: 1, modelComplexity: 1,
+                minDetectionConfidence: 0.7, minTrackingConfidence: 0.5,
+            });
+            hands.onResults(results => {
+                if (results.multiHandLandmarks?.length > 0) {
+                    const lm = results.multiHandLandmarks[0];
+                    state.handData = lm;
+                    drawHandSkeleton(lm);
+                    processHand(lm);
+                    statusEl.className = 'st-active';
+                    statusEl.textContent = 'Tracking';
+                } else {
+                    state.handData = null;
+                    state.gesture = 'none';
+                    updateGestureUI('none');
+                    drawHandSkeleton(null);
+                    statusEl.className = 'st-ready';
+                    statusEl.textContent = 'Ready';
+                }
+            });
+            const cam = new Camera(videoEl, {
+                onFrame: async () => { await hands.send({ image: videoEl }); },
+                width: 320, height: 240,
+            });
+            cam.start().then(() => {
+                statusEl.className = 'st-ready';
+                statusEl.textContent = 'Ready';
+            }).catch(() => {
+                statusEl.textContent = 'No Camera';
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════
+        //  GESTURE DETECTION
+        // ═══════════════════════════════════════════════════════
+        function processHand(lm) {
+            const indexWorld = landmarkToWorld(lm[8]);
+            const thumbWorld = landmarkToWorld(lm[4]);
+            const palmWorld = landmarkToWorld(lm[9]);
+
+            state.smoothedHand.lerp(indexWorld, CONFIG.cursorSmoothing);
+            state.smoothedPalm.lerp(palmWorld, CONFIG.cursorSmoothing);
+
+            const pinchDist = Math.sqrt(
+                (lm[4].x - lm[8].x) ** 2 + (lm[4].y - lm[8].y) ** 2 + (lm[4].z - lm[8].z) ** 2
+            );
+            state.pinchDistance = pinchDist;
+
+            if (pinchDist < CONFIG.pinchThreshold) {
+                const mid = new THREE.Vector3().lerpVectors(indexWorld, thumbWorld, 0.5);
+                state.pinchMid.lerp(mid, CONFIG.cursorSmoothing);
+            }
+
+            const indexUp  = lm[8].y  < lm[6].y;
+            const middleUp = lm[12].y < lm[10].y;
+            const ringUp   = lm[16].y < lm[14].y;
+            const pinkyUp  = lm[20].y < lm[18].y;
+            const ext = [indexUp, middleUp, ringUp, pinkyUp].filter(Boolean).length;
+
+            state.prevGesture = state.gesture;
+            if (pinchDist < CONFIG.pinchThreshold) state.gesture = 'pinch';
+            else if (ext === 1 && indexUp) state.gesture = 'point';
+            else if (ext === 2 && indexUp && middleUp) state.gesture = 'peace';
+            else if (ext >= 3) state.gesture = 'open';
+            else if (ext <= 1) state.gesture = 'grab';
+            else state.gesture = 'none';
+
+            updateGestureUI(state.gesture);
+        }
+
+        // ═══════════════════════════════════════════════════════
+        //  ANIMATION LOOP
+        // ═══════════════════════════════════════════════════════
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if (!voxelMesh) return;
+            const t = clock.getElapsedTime();
+
+            const hasHand = !!state.handData;
+            const gesture = state.gesture;
+
+            // Hand position projected onto XZ field
+            const handX = state.smoothedHand.x;
+            const handZ = state.smoothedHand.z;
+            const handY = state.smoothedHand.y;
+            const pinchX = state.pinchMid.x;
+            const pinchZ = state.pinchMid.z;
+
+            // Ripple management for peace gesture
+            if (hasHand && gesture === 'peace' && t - state.lastRippleTime > 0.3) {
+                state.ripples.push({ x: handX, z: handZ, t });
+                state.lastRippleTime = t;
+            }
+            // Remove old ripples
+            state.ripples = state.ripples.filter(r => t - r.t < 4);
+
+            // Hand-following light
+            if (hasHand) {
+                handLight.position.set(handX, 6, handZ);
+                handLight.intensity += (2.5 - handLight.intensity) * 0.1;
+            } else {
+                handLight.intensity *= 0.95;
+            }
+
+            // ── Spring physics + gesture forces ──────────────
+            const arr = voxelMesh.instanceMatrix.array;
+
+            for (let i = 0; i < voxelCount; i++) {
+                const i3 = i * 3;
+                const hx = homes[i3], hz = homes[i3 + 2];
+                const isT = textFlags[i];
+
+                // Idle wave
+                const wave = Math.sin(hx * 0.35 + t * 0.7) * Math.cos(hz * 0.35 + t * 0.55) * 0.08;
+                const restY = (isT ? CONFIG.textElevation : 0) + wave;
+
+                // Spring forces
+                let fx = -offsets[i3] * CONFIG.springK;
+                let fy = (restY - offsets[i3 + 1]) * CONFIG.springK;
+                let fz = -offsets[i3 + 2] * CONFIG.springK;
+
+                // Gesture forces
+                if (hasHand && gesture !== 'none') {
+                    const useX = gesture === 'pinch' ? pinchX : handX;
+                    const useZ = gesture === 'pinch' ? pinchZ : handZ;
+                    const dx = hx + offsets[i3] - useX;
+                    const dz = hz + offsets[i3 + 2] - useZ;
+                    const dist = Math.sqrt(dx * dx + dz * dz);
+
+                    switch (gesture) {
+                        case 'point': {
+                            if (dist < CONFIG.pointRadius) {
+                                const f = 1 - dist / CONFIG.pointRadius;
+                                fy += CONFIG.pointStrength * f * f;
+                            }
+                            break;
+                        }
+                        case 'open': {
+                            if (dist < CONFIG.openRadius) {
+                                const f = 1 - dist / CONFIG.openRadius;
+                                const invD = 1 / (dist + 0.15);
+                                fy -= CONFIG.openDownStrength * f * f;
+                                fx += dx * invD * CONFIG.openOutStrength * f;
+                                fz += dz * invD * CONFIG.openOutStrength * f;
+                            }
+                            break;
+                        }
+                        case 'pinch': {
+                            if (dist < CONFIG.pinchRadius) {
+                                const f = 1 - dist / CONFIG.pinchRadius;
+                                fy += CONFIG.pinchStrength * f * f * f;
+                            }
+                            break;
+                        }
+                        case 'grab': {
+                            if (dist < CONFIG.grabRadius) {
+                                const f = 1 - dist / CONFIG.grabRadius;
+                                const invD = 1 / (dist + 0.15);
+                                fx += -dz * invD * CONFIG.grabSwirlStrength * f;
+                                fz += dx * invD * CONFIG.grabSwirlStrength * f;
+                                fy += CONFIG.grabLiftStrength * f * f;
+                            }
+                            break;
+                        }
+                        case 'peace': {
+                            for (const ripple of state.ripples) {
+                                const rdx = hx - ripple.x;
+                                const rdz = hz - ripple.z;
+                                const rDist = Math.sqrt(rdx * rdx + rdz * rdz);
+                                const age = t - ripple.t;
+                                const ringR = age * CONFIG.rippleSpeed;
+                                const dToRing = Math.abs(rDist - ringR);
+                                if (dToRing < 1.8) {
+                                    const env = Math.exp(-age * 1.5) * (1 - dToRing / 1.8);
+                                    fy += Math.sin(rDist * CONFIG.rippleFreq - t * 5) * CONFIG.rippleStrength * env;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                // Integrate
+                vels[i3]     = (vels[i3]     + fx) * CONFIG.damping;
+                vels[i3 + 1] = (vels[i3 + 1] + fy) * CONFIG.damping;
+                vels[i3 + 2] = (vels[i3 + 2] + fz) * CONFIG.damping;
+
+                offsets[i3]     += vels[i3];
+                offsets[i3 + 1] += vels[i3 + 1];
+                offsets[i3 + 2] += vels[i3 + 2];
+
+                // ── Update matrix ────────────────────────────
+                const dispY = offsets[i3 + 1];
+                const s = 1 + Math.abs(dispY) * 0.04;
+                const m = i * 16;
+                // Scale (diagonal)
+                arr[m] = s; arr[m + 5] = s; arr[m + 10] = s;
+                // Clear rotation/shear
+                arr[m + 1] = 0; arr[m + 2] = 0;
+                arr[m + 4] = 0; arr[m + 6] = 0;
+                arr[m + 8] = 0; arr[m + 9] = 0;
+                // Translation
+                arr[m + 12] = hx + offsets[i3];
+                arr[m + 13] = dispY;
+                arr[m + 14] = hz + offsets[i3 + 2];
+                // W
+                arr[m + 3] = 0; arr[m + 7] = 0; arr[m + 11] = 0; arr[m + 15] = 1;
+
+                // ── Update color ─────────────────────────────
+                // Cornflower blue (#6495ED) → Klein International Blue (#002FA7)
+                const baseRest = isT ? CONFIG.textElevation : 0;
+                const displacement = Math.abs(dispY - baseRest);
+                const activation = Math.min(displacement / 2.0, 1);
+                const bR = 0.392 * (1 - activation);
+                const bG = 0.584 + (0.184 - 0.584) * activation;
+                const bB = 0.929 + (0.655 - 0.929) * activation;
+
+                if (isT) {
+                    tempColor.setRGB(
+                        0.85 * (1 - activation) + bR * activation,
+                        0.85 * (1 - activation) + bG * activation,
+                        0.90 * (1 - activation) + bB * activation
+                    );
+                } else {
+                    tempColor.setRGB(
+                        0.10 * (1 - activation) + bR * activation,
+                        0.10 * (1 - activation) + bG * activation,
+                        0.14 * (1 - activation) + bB * activation
+                    );
+                }
+                voxelMesh.setColorAt(i, tempColor);
+            }
+
+            voxelMesh.instanceMatrix.needsUpdate = true;
+            voxelMesh.instanceColor.needsUpdate = true;
+
+            // ── Cursor ───────────────────────────────────────
+            const ct = hasHand ? 0.3 : 0;
+            cursorMat.opacity += (ct - cursorMat.opacity) * 0.12;
+            ringMat.opacity += (ct * 0.4 - ringMat.opacity) * 0.12;
+            if (hasHand) {
+                cursorGroup.position.lerp(state.smoothedHand, 0.3);
+                cursorRing.rotation.z = t * 1.2;
+                cursorRing.scale.setScalar(
+                    gesture === 'pinch' ? 0.4 : gesture === 'grab' ? 1.6 : 1 + Math.sin(t * 3) * 0.06
+                );
+            }
+
+            // ── Idle camera sway ─────────────────────────────
+            if (!hasHand) {
+                camera.position.x = Math.sin(t * 0.15) * 1.5;
+                camera.position.z = 24 + Math.cos(t * 0.12) * 0.8;
+                camera.lookAt(0, 0, 0);
+            }
+
+            composer.render();
+            drawOverlay();
+        }
+
+        animate();
+
+        // ═══════════════════════════════════════════════════════
+        //  OVERLAY — big centered text + POSTER_SYSTEM labels
+        // ═══════════════════════════════════════════════════════
+        // The 2D overlay canvas stacks above the three.js canvas
+        // (z-index 2, pointer-events: none). Each frame we wipe it,
+        // paint the large display title in the middle of the poster,
+        // then hand off to POSTER_SYSTEM for the 5-slot metadata.
+        function drawOverlay() {
+            overlayCtx.clearRect(0, 0, POSTER_W, POSTER_H);
+            if (overlayHidden) return;
+
+            // --- Big centered title ---
+            // Size scales inversely with word length so short words
+            // fill the frame and long words still fit.
+            const word = (state.word || 'FLUX').toUpperCase();
+            const maxWidth = POSTER_W * 0.80;
+            let fontSize = 260;
+            overlayCtx.font = fontSize + 'px "Anton", "Helvetica Neue", Arial, sans-serif';
+            let w = overlayCtx.measureText(word).width;
+            if (w > maxWidth) {
+                fontSize *= maxWidth / w;
+                overlayCtx.font = fontSize + 'px "Anton", "Helvetica Neue", Arial, sans-serif';
+            }
+            // Subtle dark drop-shadow so the title always reads
+            // against the cornflower-blue voxel field below.
+            overlayCtx.shadowColor = 'rgba(0, 0, 0, 0.6)';
+            overlayCtx.shadowBlur = 24;
+            overlayCtx.shadowOffsetY = 4;
+            overlayCtx.fillStyle = 'rgba(255, 255, 255, 0.96)';
+            overlayCtx.textAlign = 'center';
+            overlayCtx.textBaseline = 'middle';
+            overlayCtx.fillText(word, POSTER_W / 2, POSTER_H / 2 + fontSize * 0.02);
+            overlayCtx.shadowBlur = 0;
+            overlayCtx.shadowOffsetY = 0;
+
+            // --- Poster series metadata ---
+            if (window.POSTER_SYSTEM) {
+                POSTER_SYSTEM.drawOverlay(overlayCtx, {
+                    experimentId: '02',
+                    seriesName: 'VOXELS',
+                    topRight: 'FIELD · ' + voxelCount,
+                    bottomRight: 'GESTURE · ' + (state.handData ? state.gesture.toUpperCase() : 'IDLE'),
+                    verticalContent: state.word,
+                    invert: true, // dark canvas
+                });
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════
+        //  KEYBOARD — H (overlay toggle) + S (composite PNG save)
+        // ═══════════════════════════════════════════════════════
+        function saveComposite() {
+            const prev = overlayHidden;
+            overlayHidden = false;
+            composer.render();
+            drawOverlay();
+
+            const out = document.createElement('canvas');
+            out.width = POSTER_W;
+            out.height = POSTER_H;
+            const outCtx = out.getContext('2d');
+            outCtx.drawImage(renderer.domElement, 0, 0);
+            outCtx.drawImage(overlayCanvas, 0, 0);
+
+            out.toBlob((blob) => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'voxels.png';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }, 'image/png');
+
+            overlayHidden = prev;
+        }
+
+        window.addEventListener('keydown', (e) => {
+            const a = document.activeElement;
+            if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) return;
+            if (e.key === 'h' || e.key === 'H') {
+                overlayHidden = !overlayHidden;
+                e.preventDefault();
+            } else if (e.key === 's' || e.key === 'S') {
+                saveComposite();
+                e.preventDefault();
+            }
+        });
+
+        // ═══════════════════════════════════════════════════════
+        //  RESIZE
+        // ═══════════════════════════════════════════════════════
+        // Internal canvas resolution is fixed at 660×900; only the
+        // CSS size of #sketch changes as the viewport resizes.
+        window.addEventListener('resize', fitToViewport);
+
+        // ═══════════════════════════════════════════════════════
+        //  START
+        // ═══════════════════════════════════════════════════════
+        initHandTracking();
+    </script>
+</body>
+</html>
