@@ -162,6 +162,103 @@
       margin-top: 8px;
     }
 
+    /* ── Pre-camera gaze intro ────────────────────────── */
+    #eye-intro {
+      position: absolute; inset: 0;
+      z-index: 120;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(241, 238, 232, 0.88);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+    }
+    #eye-intro.hidden { display: none; }
+    #eye-intro-panel {
+      max-width: 440px;
+      margin: 0 32px;
+      padding: 32px 34px 30px;
+      background: #ffffff;
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.18);
+      font-family: 'IBM Plex Mono', monospace;
+      color: #0d0c10;
+      pointer-events: auto;
+    }
+    #eye-intro-eyebrow {
+      font-size: 9px;
+      font-weight: 500;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: rgba(13, 12, 16, 0.55);
+      margin-bottom: 12px;
+    }
+    #eye-intro-title {
+      font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.3px;
+      line-height: 1.2;
+      margin-bottom: 14px;
+    }
+    #eye-intro-body {
+      font-size: 12px;
+      line-height: 1.55;
+      color: rgba(13, 12, 16, 0.8);
+      margin-bottom: 22px;
+    }
+    #eye-intro-steps {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 26px;
+      font-size: 10px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: rgba(13, 12, 16, 0.7);
+    }
+    #eye-intro-steps li {
+      padding: 9px 0;
+      border-top: 1px solid rgba(0, 0, 0, 0.08);
+    }
+    #eye-intro-steps li:last-child { border-bottom: 1px solid rgba(0, 0, 0, 0.08); }
+    #eye-intro-steps b {
+      font-weight: 500;
+      color: rgba(13, 12, 16, 0.35);
+      margin-right: 4px;
+    }
+    #eye-intro-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    #eye-intro-actions button {
+      font-family: inherit;
+      font-size: 10px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      padding: 12px 18px;
+      border: 1px solid rgba(0, 0, 0, 0.18);
+      background: transparent;
+      color: rgba(13, 12, 16, 0.75);
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s, border-color 0.2s;
+      border-radius: 0;
+    }
+    #eye-intro-actions button:hover {
+      background: rgba(0, 0, 0, 0.05);
+      color: #0d0c10;
+      border-color: rgba(0, 0, 0, 0.4);
+    }
+    #eye-intro-actions button.primary {
+      background: #0d0c10;
+      color: #f1eee8;
+      border-color: #0d0c10;
+    }
+    #eye-intro-actions button.primary:hover {
+      background: #000;
+      color: #fff;
+    }
+
     /* ── Floating control bar ─────────────────────────── */
     .controls {
       position: fixed;
@@ -303,6 +400,19 @@
       <div id="calib-instructions">
         <div id="calib-label">LOOK HERE</div>
         <div id="calib-step">1 / 4</div>
+      </div>
+    </div>
+    <div id="eye-intro" class="hidden">
+      <div id="eye-intro-panel">
+        <div id="eye-intro-eyebrow">Eye tracking</div>
+        <p id="eye-intro-body">
+          Your iris will be mapped to the four corners of the poster.
+          Follow the red dot.
+        </p>
+        <div id="eye-intro-actions">
+          <button id="eye-intro-start" class="primary">Begin</button>
+          <button id="eye-intro-cancel">Cancel</button>
+        </div>
       </div>
     </div>
   </div>
@@ -1556,7 +1666,37 @@
     });
 
     // Eye tracking toggle
-    eyeToggle.addEventListener('click', () => enableEyeTracking());
+    // Clicking EYE TRACK the first time opens an instructions panel
+    // (what the calibration will do, camera permission heads-up). Only
+    // after the user confirms do we call enableEyeTracking() and
+    // request getUserMedia. Toggling OFF skips the intro — just stops.
+    const eyeIntroRoot   = document.getElementById('eye-intro');
+    const eyeIntroStart  = document.getElementById('eye-intro-start');
+    const eyeIntroCancel = document.getElementById('eye-intro-cancel');
+
+    function showEyeIntro() {
+      eyeIntroRoot.classList.remove('hidden');
+    }
+    function hideEyeIntro() {
+      eyeIntroRoot.classList.add('hidden');
+    }
+    eyeIntroStart.addEventListener('click', () => {
+      hideEyeIntro();
+      enableEyeTracking();
+    });
+    eyeIntroCancel.addEventListener('click', hideEyeIntro);
+    eyeIntroRoot.addEventListener('click', (e) => {
+      if (e.target === eyeIntroRoot) hideEyeIntro(); // click-outside to dismiss
+    });
+
+    eyeToggle.addEventListener('click', () => {
+      if (eyeEnabled || cameraLoopActive) {
+        // Already tracking — EYE TRACK button toggles off. No intro needed.
+        enableEyeTracking();
+      } else {
+        showEyeIntro();
+      }
+    });
 
     // Global keys
     window.addEventListener('keydown', (e) => {
