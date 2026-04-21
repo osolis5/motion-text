@@ -376,7 +376,7 @@
   <a href="index.html" class="back">&larr; Back</a>
 
   <div class="controls">
-    <input id="text-input" type="text" value="INFLATE" maxlength="40" spellcheck="false" autocomplete="off">
+    <input id="text-input" type="text" value="no, pues sí" maxlength="40" spellcheck="false" autocomplete="off">
     <div class="seg" id="mode-toggle">
       <button data-mode="black" class="active">BLACK</button>
       <button data-mode="gradient">GRADIENT</button>
@@ -494,7 +494,7 @@
   let overlayHidden = false;
   let paused = false;
   let mode = 'black';
-  let currentText = 'INFLATE';
+  let currentText = 'no, pues sí';
 
   // Group rotation (drag with pointer)
   let rotX = -0.04, rotY = 0.0;
@@ -1697,6 +1697,13 @@
         showEyeIntro();
       }
     });
+
+    // Surface the intro on initial load so the eye-tracking feature is
+    // discoverable without the user hunting for the EYE TRACK button.
+    // Short delay lets the 3D scene paint first.
+    setTimeout(() => {
+      if (!eyeEnabled && !calib.active) showEyeIntro();
+    }, 700);
 
     // Global keys
     window.addEventListener('keydown', (e) => {
