@@ -1,0 +1,1758 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Inflate — 3D Balloon Type</title>
+  <meta name="description" content="Inflated 3D letterforms — gaze-tracked, gradient-shaded balloon typography with collision physics">
+  <meta name="theme-color" content="#0A0A0A">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <!-- Shared poster overlay -->
+  <script src="poster-system.js"></script>
+
+  <!-- Shared projection-mapping helper. Inflate uses `#stage` as its
+       fixed-aspect container (not `#sketch` like the rest of the
+       series) because #stage hosts its own scale-to-fit transform.
+       We init explicitly with that target; projection mapping will
+       override the scale transform with its matrix3d when active —
+       recalibrate corners per surface. -->
+  <script src="projection-mapping.js"></script>
+  <script>
+    window.addEventListener('DOMContentLoaded', () => {
+      if (window.PROJECTION_MAPPING) {
+        PROJECTION_MAPPING.init({ target: '#stage' });
+      }
+    });
+  </script>
+
+  <!-- MediaPipe FaceMesh — same package the rest of the series uses.
+       refineLandmarks adds the 10 iris points (468–477) we need for gaze. -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/face_mesh.js" crossorigin="anonymous"></script>
+
+  <!-- Three.js — ESM via importmap so addons (FontLoader, TextGeometry) resolve -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: #0A0A0A;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Poster stage — fixed-aspect frame, scaled by JS to fit viewport */
+    #stage {
+      position: relative;
+      width: 720px;
+      height: 1000px;
+      background: #f1eee8;
+      box-shadow: 0 30px 120px rgba(0, 0, 0, 0.55);
+      transform-origin: center center;
+      overflow: hidden;
+    }
+
+    /* Soft floor shadow under the inflated word */
+    #stage::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 60%;
+      width: 86%;
+      height: 16%;
+      transform: translate(-50%, -50%);
+      background: radial-gradient(ellipse at center,
+        rgba(0, 0, 0, 0.28) 0%,
+        rgba(0, 0, 0, 0.14) 40%,
+        rgba(0, 0, 0, 0) 75%);
+      pointer-events: none;
+      z-index: 0;
+      filter: blur(10px);
+    }
+
+    #stage canvas { display: block; width: 100%; height: 100%; cursor: grab; position: relative; z-index: 1; }
+    /* Overlay must be ABSOLUTE so it stacks ON TOP of #gl instead of
+       being pushed below it by document flow — which silently moved
+       the entire poster-tag overlay off-screen. */
+    #stage #overlay {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 2;
+      pointer-events: none;
+    }
+    #stage.dragging canvas { cursor: grabbing; }
+
+    /* Hidden webcam video — fed into FaceMesh */
+    #webcam { position: absolute; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
+
+    #loading {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 9px; letter-spacing: 4px;
+      color: rgba(0, 0, 0, 0.35);
+      pointer-events: none;
+      z-index: 5;
+    }
+    #loading.hidden { display: none; }
+
+    /* ── 4-corner gaze calibration UI ─────────────────── */
+    #calib {
+      position: absolute; inset: 0;
+      z-index: 100;
+      pointer-events: none;
+    }
+    #calib.hidden { display: none; }
+    #calib-dot {
+      position: absolute;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      background: #ff3b3b;
+      box-shadow: 0 0 18px rgba(255, 59, 59, 0.55);
+      left: 0; top: 0;
+      transform: translate(-50%, -50%);
+      animation: calib-pulse 1s ease-in-out infinite;
+      transition: left 0.25s ease, top 0.25s ease;
+    }
+    @keyframes calib-pulse {
+      0%, 100% { opacity: 1;   box-shadow: 0 0 18px rgba(255,59,59,0.55); }
+      50%      { opacity: 0.5; box-shadow: 0 0 28px rgba(255,59,59,0.85); }
+    }
+    #calib-instructions {
+      position: absolute;
+      left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      font-family: 'IBM Plex Mono', monospace;
+      color: rgba(0, 0, 0, 0.85);
+      background: rgba(241, 238, 232, 0.82);
+      padding: 14px 22px;
+      border: 1px solid rgba(0, 0, 0, 0.15);
+    }
+    #calib-label {
+      font-size: 14px;
+      font-weight: 500;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+    }
+    #calib-step {
+      font-size: 10px;
+      letter-spacing: 3px;
+      opacity: 0.55;
+      margin-top: 8px;
+    }
+
+    /* ── Floating control bar ─────────────────────────── */
+    .controls {
+      position: fixed;
+      top: 22px;
+      right: 24px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.7);
+      z-index: 10;
+    }
+
+    .controls input[type="text"] {
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      color: rgba(255, 255, 255, 0.95);
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      padding: 7px 10px;
+      width: 180px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .controls input[type="text"]:focus {
+      border-color: rgba(255, 255, 255, 0.55);
+    }
+
+    .seg {
+      display: flex;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+    }
+    .seg button {
+      background: transparent;
+      border: none;
+      color: rgba(255, 255, 255, 0.45);
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 2px;
+      padding: 7px 9px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .seg button + button { border-left: 1px solid rgba(255, 255, 255, 0.18); }
+    .seg button:hover { color: rgba(255, 255, 255, 0.85); }
+    .seg button.active {
+      background: rgba(255, 255, 255, 0.12);
+      color: rgba(255, 255, 255, 1);
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      background: transparent;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      color: rgba(255, 255, 255, 0.6);
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 2px;
+      padding: 7px 11px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .pill:hover { color: rgba(255, 255, 255, 0.95); border-color: rgba(255, 255, 255, 0.4); }
+    .pill.on { color: #b9f5b1; border-color: #4cd44a; background: rgba(76, 212, 74, 0.08); }
+    .pill .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: rgba(255, 255, 255, 0.3);
+      transition: background 0.2s;
+    }
+    .pill.on .dot { background: #4cd44a; box-shadow: 0 0 8px #4cd44a; }
+    .pill.err .dot { background: #ff5b5b; }
+    .pill.err { color: #ffaaaa; border-color: #ff5b5b; }
+
+    /* HUD */
+    .hud {
+      position: fixed; bottom: 22px; left: 50%;
+      transform: translateX(-50%);
+      font-size: 9px; letter-spacing: 3px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.28);
+      pointer-events: none;
+      user-select: none;
+      white-space: nowrap;
+      transition: opacity 0.8s ease;
+    }
+    .hud b {
+      color: rgba(255, 255, 255, 0.55);
+      font-weight: 400;
+      margin-right: 2px;
+    }
+    .hud .sep { opacity: 0.35; margin: 0 10px; }
+    body.idle .hud { opacity: 0; }
+
+    .back {
+      position: fixed; top: 22px; left: 24px;
+      font-size: 9px; letter-spacing: 3px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.25);
+      text-decoration: none;
+      transition: color 0.3s;
+      z-index: 10;
+    }
+    .back:hover { color: rgba(255, 255, 255, 0.6); }
+  </style>
+</head>
+<body>
+
+  <a href="index.html" class="back">&larr; Back</a>
+
+  <div class="controls">
+    <input id="text-input" type="text" value="INFLATE" maxlength="40" spellcheck="false" autocomplete="off">
+    <div class="seg" id="mode-toggle">
+      <button data-mode="black" class="active">BLACK</button>
+      <button data-mode="gradient">GRADIENT</button>
+      <button data-mode="aurora">AURORA</button>
+      <button data-mode="rubber">RUBBER</button>
+      <button data-mode="chrome">CHROME</button>
+    </div>
+    <div class="seg" id="track-toggle" title="Tracking interaction">
+      <button data-track="gaze" class="active">GAZE</button>
+      <button data-track="head">HEAD</button>
+    </div>
+    <button class="pill" id="eye-toggle"><span class="dot"></span>EYE TRACK</button>
+  </div>
+
+  <div id="stage">
+    <canvas id="gl"></canvas>
+    <canvas id="overlay"></canvas>
+    <div id="loading">·  LOADING  ·</div>
+    <div id="calib" class="hidden">
+      <div id="calib-dot"></div>
+      <div id="calib-instructions">
+        <div id="calib-label">LOOK HERE</div>
+        <div id="calib-step">1 / 4</div>
+      </div>
+    </div>
+  </div>
+
+  <video id="webcam" playsinline></video>
+
+  <div class="hud">
+    <b>TYPE</b> Word
+    <span class="sep">·</span>
+    <b>EYE</b> Gaze drag (or hover)
+    <span class="sep">·</span>
+    <b>DRAG</b> Rotate
+    <span class="sep">·</span>
+    <b>SPACE</b> Reset
+    <span class="sep">·</span>
+    <b>I</b> Invert
+    <span class="sep">·</span>
+    <b>H</b> Overlay
+    <span class="sep">·</span>
+    <b>C</b> Calibrate
+    <span class="sep">·</span>
+    <b>S</b> Save
+  </div>
+
+  <script type="module">
+  // =====================================================
+  // INFLATE — Inflated typography poster
+  //
+  // Three subsystems on one stage:
+  //   1. Letter system — TextGeometry per character with
+  //      heavy beveling so each stroke has a tube/balloon
+  //      cross section. Letters are positioned in a row
+  //      and parented into a Group that scales to fit.
+  //   2. Gradient matcaps — three procedural matcaps
+  //      (BLACK glossy, warm-stripe GRADIENT, cool CHROME)
+  //      reference different aesthetics. The GRADIENT
+  //      mode echoes the striped fuchsia/orange poster
+  //      reference: vertical color bands in the matcap
+  //      become refraction-style sweeps as letters rotate.
+  //   3. Eye tracking + physics — MediaPipe FaceMesh
+  //      gives iris landmarks (468 left, 473 right). Their
+  //      mean is mapped to scene coordinates and used as
+  //      a "gaze cursor." Each letter is a soft body with
+  //      spring force back to its rest position plus a
+  //      proximity attraction toward the gaze. A collision
+  //      pass keeps overlapping letters from interpenetrating
+  //      so they bounce when shoved together.
+  // =====================================================
+
+  import * as THREE from 'three';
+  import { FontLoader } from 'three/addons/loaders/FontLoader.js';
+  import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+
+  const POSTER_W = 720;
+  const POSTER_H = 1000;
+
+  // ── DOM refs ────────────────────────────────────
+  const stage = document.getElementById('stage');
+  const glCanvas = document.getElementById('gl');
+  const overlayCanvas = document.getElementById('overlay');
+  const loadingEl = document.getElementById('loading');
+  const textInput = document.getElementById('text-input');
+  const modeToggle = document.getElementById('mode-toggle');
+  const eyeToggle = document.getElementById('eye-toggle');
+  const webcamEl = document.getElementById('webcam');
+
+  overlayCanvas.width = POSTER_W;
+  overlayCanvas.height = POSTER_H;
+  const overlayCtx = overlayCanvas.getContext('2d');
+
+  // ── Scene state ─────────────────────────────────
+  let renderer, scene, camera;
+  let wordGroup;                 // parent group containing per-letter meshes
+  let letters = [];              // [{ mesh, char, restX, restY, x, y, vx, vy, rot, vrot, w, h, radius }]
+  let materialsByMode = {};      // 'black' | 'gradient' | 'chrome'
+  let currentMaterial;
+  let font = null;
+  let invert = false;
+  let overlayHidden = false;
+  let paused = false;
+  let mode = 'black';
+  let currentText = 'INFLATE';
+
+  // Group rotation (drag with pointer)
+  let rotX = -0.04, rotY = 0.0;
+  let targetRotX = -0.04, targetRotY = 0.0;
+  let velX = 0, velY = 0;
+  let dragging = false;
+  let lastPx = 0, lastPy = 0;
+  let lastInputT = 0;
+
+  let t = 0;
+  let hudTimer = null;
+
+  // Geometry cache — keyed by character (build params are fixed)
+  const geoCache = new Map();
+
+  // ── Eye tracking state ──────────────────────────
+  let eyeEnabled = false;
+  let faceMesh = null;
+  let mpCamera = null;
+  let lastFaceLm = null;
+  // Smoothed gaze in normalized [0,1] webcam-image coords
+  let gazeNX = 0.5, gazeNY = 0.5;
+  // Gaze in scene units (set each frame from gazeNX/gazeNY)
+  let gazeSX = 0, gazeSY = 0;
+  let gazeActive = false;        // true when face landmarks present
+
+  // ── 4-corner gaze calibration ────────────────────────────────
+  // Per-user iris range, measured by having the user look at each
+  // corner in turn. Replaces the fixed-gain mapping: subtle iris
+  // motion maps across the full poster because the envelope comes
+  // from the user's own extremes, not a guess.
+  const CALIB_CORNERS = [
+    { x: 0.06, y: 0.08, label: 'TOP · LEFT'     },
+    { x: 0.94, y: 0.08, label: 'TOP · RIGHT'    },
+    { x: 0.94, y: 0.92, label: 'BOTTOM · RIGHT' },
+    { x: 0.06, y: 0.92, label: 'BOTTOM · LEFT'  },
+  ];
+  const CALIB_HOLD_MS   = 1800;
+  const CALIB_SAMPLE_MS = 1000; // start sampling after this mark inside the hold
+  const calib = {
+    active:   false,
+    ready:    false,
+    step:     0,
+    stepStart: 0,
+    samples:  [],
+    readings: [null, null, null, null], // per-corner [irisX, irisY] median
+    // Fallback envelope before calibration — generous so something works
+    leftX: 0.35, rightX: 0.65,
+    topY:  0.40, botY:   0.62,
+  };
+
+  // ── Head-tracking state ─────────────────────────
+  // trackMode picks what the active gaze/head signal does:
+  //   'gaze' → letters get attracted to a gaze cursor (existing)
+  //   'head' → entire wordGroup translates with head position (parallax)
+  let trackMode = 'gaze';
+  // Head position in normalized image coords [0..1] — smoothed.
+  let headNX = 0.5, headNY = 0.5;
+  // Head calibration (separate from gaze — head is centered when user
+  // sits at the camera, gaze drifts independently).
+  let headCalibX = 0.5, headCalibY = 0.5;
+  let headCalibFrames = 0;
+  let headCalibrated = false;
+  // Translation offset applied to wordGroup.position when in HEAD mode.
+  let headOffsetX = 0, headOffsetY = 0;
+  // Smoothed render offset (separate low-pass for the visual translation).
+  let headDispX = 0, headDispY = 0;
+
+  // ---------------------------------------------------------------
+  // 1. Three.js bootstrap
+  // ---------------------------------------------------------------
+  function initThree() {
+    renderer = new THREE.WebGLRenderer({
+      canvas: glCanvas,
+      antialias: true,
+      alpha: true,
+      premultipliedAlpha: false,
+    });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(POSTER_W, POSTER_H, false);
+    renderer.setClearColor(0x000000, 0);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+    scene = new THREE.Scene();
+
+    camera = new THREE.PerspectiveCamera(20, POSTER_W / POSTER_H, 0.1, 200);
+    camera.position.set(0, 0, 26);
+    camera.lookAt(0, 0, 0);
+
+    materialsByMode.black = new THREE.MeshMatcapMaterial({ matcap: makeMatcap('black') });
+    materialsByMode.gradient = new THREE.MeshMatcapMaterial({ matcap: makeMatcap('gradient') });
+    materialsByMode.aurora = new THREE.MeshMatcapMaterial({ matcap: makeMatcap('aurora') });
+    materialsByMode.rubber = new THREE.MeshMatcapMaterial({ matcap: makeMatcap('rubber') });
+    materialsByMode.chrome = new THREE.MeshMatcapMaterial({ matcap: makeMatcap('chrome') });
+    currentMaterial = materialsByMode[mode];
+
+    wordGroup = new THREE.Group();
+    scene.add(wordGroup);
+  }
+
+  // ---------------------------------------------------------------
+  // 2. Procedural matcaps
+  //    The matcap encodes the lit appearance of a sphere — a normal
+  //    pointing at (nx, ny, nz) samples the texture at
+  //    (nx*0.5+0.5, -ny*0.5+0.5). Center pixel = camera-facing
+  //    surface; edges = grazing angles.
+  // ---------------------------------------------------------------
+  function makeMatcap(kind) {
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 256;
+    const ctx = c.getContext('2d');
+
+    if (kind === 'black') {
+      // Glossy void — pure black with a single upper-left sheen.
+      ctx.fillStyle = '#020203';
+      ctx.fillRect(0, 0, 256, 256);
+
+      const rim = ctx.createRadialGradient(232, 150, 5, 232, 150, 110);
+      rim.addColorStop(0, 'rgba(150, 165, 200, 0.55)');
+      rim.addColorStop(1, 'rgba(150, 165, 200, 0)');
+      ctx.fillStyle = rim; ctx.fillRect(0, 0, 256, 256);
+
+      const under = ctx.createRadialGradient(128, 232, 5, 128, 232, 80);
+      under.addColorStop(0, 'rgba(80, 80, 100, 0.4)');
+      under.addColorStop(1, 'rgba(80, 80, 100, 0)');
+      ctx.fillStyle = under; ctx.fillRect(0, 0, 256, 256);
+
+      const sheen = ctx.createRadialGradient(82, 70, 0, 82, 70, 95);
+      sheen.addColorStop(0, 'rgba(255, 255, 255, 0.85)');
+      sheen.addColorStop(0.45, 'rgba(255, 255, 255, 0.15)');
+      sheen.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = sheen; ctx.fillRect(0, 0, 256, 256);
+
+      const glint = ctx.createRadialGradient(95, 60, 0, 95, 60, 22);
+      glint.addColorStop(0, 'rgba(255, 255, 255, 1)');
+      glint.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = glint; ctx.fillRect(0, 0, 256, 256);
+
+    } else if (kind === 'gradient') {
+      // Continuous warm-spectrum gradient — kelly green replaces the
+      // earlier yellow band, and discrete stripes have been collapsed
+      // into one Canvas linear gradient with many color stops so the
+      // chromatic sweeps interpolate smoothly across the tube cross
+      // section instead of stepping through hard bands.
+      const grad = ctx.createLinearGradient(0, 0, 0, 256);
+      grad.addColorStop(0.00, '#ff3aa0');  // hot pink
+      grad.addColorStop(0.12, '#ff1f4a');  // crimson
+      grad.addColorStop(0.24, '#ff5a1f');  // burnt orange
+      grad.addColorStop(0.36, '#ff8a16');  // orange
+      grad.addColorStop(0.50, '#3eb649');  // kelly green ← replaces yellow
+      grad.addColorStop(0.64, '#ff8a16');  // orange (return)
+      grad.addColorStop(0.76, '#ff2e5a');  // hot red
+      grad.addColorStop(0.88, '#ff1aa6');  // pink-magenta
+      grad.addColorStop(1.00, '#7e0fff');  // violet
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 256, 256);
+
+      // Specular sheen — keeps the upper-left bright so the inflated
+      // form still reads as a 3D surface.
+      const sheen = ctx.createRadialGradient(85, 70, 0, 85, 70, 110);
+      sheen.addColorStop(0, 'rgba(255, 255, 255, 0.65)');
+      sheen.addColorStop(0.55, 'rgba(255, 255, 255, 0.08)');
+      sheen.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = sheen; ctx.fillRect(0, 0, 256, 256);
+
+      const glint = ctx.createRadialGradient(96, 62, 0, 96, 62, 22);
+      glint.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
+      glint.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = glint; ctx.fillRect(0, 0, 256, 256);
+
+      // Bottom-edge falloff — keeps bottom lobe dark for contrast
+      const dark = ctx.createLinearGradient(0, 256, 0, 140);
+      dark.addColorStop(0, 'rgba(20, 0, 30, 0.55)');
+      dark.addColorStop(1, 'rgba(20, 0, 30, 0)');
+      ctx.fillStyle = dark; ctx.fillRect(0, 0, 256, 256);
+
+    } else if (kind === 'aurora') {
+      // Cool jewel-tone spectrum referencing the studiohelmo Strasbourg
+      // Jazzdor poster — smooth bands of teal → yellow → teal → royal
+      // blue → teal → magenta-purple → deep purple. Same continuous
+      // gradient strategy as GRADIENT (single Canvas linear gradient
+      // with multiple stops) so colors interpolate smoothly across the
+      // tube cross-section instead of stepping through hard bands.
+      const grad = ctx.createLinearGradient(0, 0, 0, 256);
+      grad.addColorStop(0.00, '#3ec0ce');  // teal
+      grad.addColorStop(0.12, '#a3d24a');  // teal-yellow blend
+      grad.addColorStop(0.22, '#f5e74e');  // saturated yellow
+      grad.addColorStop(0.36, '#7ec3a8');  // teal again
+      grad.addColorStop(0.50, '#3a4dc8');  // royal blue
+      grad.addColorStop(0.64, '#3ec0ce');  // teal
+      grad.addColorStop(0.78, '#7a55c4');  // violet bridge
+      grad.addColorStop(0.90, '#a23eb8');  // magenta-purple
+      grad.addColorStop(1.00, '#3a1860');  // deep purple
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 256, 256);
+
+      // Soft upper-left sheen — keeps the form readable as inflated
+      // 3D rather than a flat painted pattern.
+      const sheen = ctx.createRadialGradient(85, 70, 0, 85, 70, 130);
+      sheen.addColorStop(0,    'rgba(255, 255, 255, 0.55)');
+      sheen.addColorStop(0.50, 'rgba(255, 255, 255, 0.08)');
+      sheen.addColorStop(1,    'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = sheen; ctx.fillRect(0, 0, 256, 256);
+
+      // Tiny crisp highlight dot — chrome glint feel
+      const glint = ctx.createRadialGradient(98, 64, 0, 98, 64, 18);
+      glint.addColorStop(0, 'rgba(255, 255, 255, 0.85)');
+      glint.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = glint; ctx.fillRect(0, 0, 256, 256);
+
+      // Bottom-edge cool darkening — anchors the palette
+      const dark = ctx.createLinearGradient(0, 256, 0, 160);
+      dark.addColorStop(0, 'rgba(15, 5, 35, 0.55)');
+      dark.addColorStop(1, 'rgba(15, 5, 35, 0)');
+      ctx.fillStyle = dark; ctx.fillRect(0, 0, 256, 256);
+
+    } else if (kind === 'rubber') {
+      // Rubber-balloon material — saturated balloon-red base with a
+      // BROAD, SOFT highlight (no sharp glint). The sub-surface warmth
+      // around the rim and the diffuse falloff are what differentiate
+      // "rubber" from "glass" — light scatters across the surface
+      // instead of mirror-reflecting one point.
+      //
+      // Base: rich balloon red. We avoid pure red so the highlight has
+      // somewhere to wash up to without clipping.
+      ctx.fillStyle = '#b81f2c';
+      ctx.fillRect(0, 0, 256, 256);
+
+      // Subsurface warmth — soft orange glow underneath the surface,
+      // strongest at the bottom and rim. Mimics light bleeding through
+      // a thin membrane (the classic rubber balloon read).
+      const sub = ctx.createRadialGradient(128, 200, 5, 128, 200, 180);
+      sub.addColorStop(0, 'rgba(255, 110, 90, 0.55)');
+      sub.addColorStop(1, 'rgba(255, 110, 90, 0)');
+      ctx.fillStyle = sub; ctx.fillRect(0, 0, 256, 256);
+
+      // Cool darkening on the underside — anchors the form so it
+      // doesn't float weightless.
+      const shade = ctx.createRadialGradient(128, 230, 5, 128, 230, 110);
+      shade.addColorStop(0, 'rgba(40, 0, 12, 0.55)');
+      shade.addColorStop(1, 'rgba(40, 0, 12, 0)');
+      ctx.fillStyle = shade; ctx.fillRect(0, 0, 256, 256);
+
+      // BROAD soft highlight — no glint, no chrome. Rubber's specular
+      // is wide and gentle. Centered upper-left to keep the standard
+      // "lit from above" reading.
+      const sheen = ctx.createRadialGradient(95, 80, 0, 95, 80, 150);
+      sheen.addColorStop(0,    'rgba(255, 230, 220, 0.75)');
+      sheen.addColorStop(0.30, 'rgba(255, 200, 190, 0.32)');
+      sheen.addColorStop(0.70, 'rgba(255, 180, 170, 0.08)');
+      sheen.addColorStop(1,    'rgba(255, 180, 170, 0)');
+      ctx.fillStyle = sheen; ctx.fillRect(0, 0, 256, 256);
+
+      // Tiny SOFT inner sheen — gives a sense of dimensional curvature
+      // but stops short of becoming a hard chrome glint.
+      const inner = ctx.createRadialGradient(100, 75, 0, 100, 75, 36);
+      inner.addColorStop(0, 'rgba(255, 245, 235, 0.45)');
+      inner.addColorStop(1, 'rgba(255, 245, 235, 0)');
+      ctx.fillStyle = inner; ctx.fillRect(0, 0, 256, 256);
+
+    } else { // chrome
+      const grad = ctx.createLinearGradient(0, 0, 0, 256);
+      grad.addColorStop(0, '#f7f5ee');
+      grad.addColorStop(0.45, '#a3acb8');
+      grad.addColorStop(0.7, '#3b3f48');
+      grad.addColorStop(1, '#0c0d10');
+      ctx.fillStyle = grad; ctx.fillRect(0, 0, 256, 256);
+      const sheen = ctx.createRadialGradient(85, 70, 0, 85, 70, 130);
+      sheen.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
+      sheen.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = sheen; ctx.fillRect(0, 0, 256, 256);
+    }
+
+    // Vignette so off-screen normals don't band
+    const vignette = ctx.createRadialGradient(128, 128, 100, 128, 128, 130);
+    vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    vignette.addColorStop(1, 'rgba(0, 0, 0, 0.45)');
+    ctx.fillStyle = vignette; ctx.fillRect(0, 0, 256, 256);
+
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  function setMode(newMode) {
+    mode = newMode;
+    currentMaterial = materialsByMode[newMode];
+    for (const L of letters) L.mesh.material = currentMaterial;
+    modeToggle.querySelectorAll('button').forEach(b => {
+      b.classList.toggle('active', b.dataset.mode === newMode);
+    });
+  }
+
+  // ---------------------------------------------------------------
+  // 3. Letter geometry
+  //    Equal bevelSize/bevelThickness with negative bevelOffset
+  //    fattens each stroke into a tube cross-section so the letter
+  //    reads as inflated rather than extruded.
+  // ---------------------------------------------------------------
+  const LETTER_SIZE = 2.2;
+  // Bigger DEPTH + bigger BEVEL_SIZE + more negative BEVEL_OFFSET =
+  // chunkier, balloon-thick strokes with tube cross-section. Anything
+  // beyond these values starts to crush the inner counters of glyphs
+  // like A, B, P, R.
+  const LETTER_DEPTH = 0.95;
+  const LETTER_BEVEL_OFFSET = -0.20;
+  const LETTER_BEVEL_SIZE = 0.40;
+  const LETTER_BEVEL_THICK = 0.46;
+  const LETTER_BEVEL_SEG = 28;
+  const LETTER_GAP = 0.14;
+  const LETTER_LINE_LEAD = 1.02;
+  // Vertex puff disabled — TextGeometry's bevel normals diverge across
+  // adjacent ring vertices, so any puff > 0.05 splays them apart. The
+  // balloon volume comes entirely from the bevel parameters above.
+  const LETTER_PUFF = 0.0;
+
+  function getLetterGeo(char) {
+    if (geoCache.has(char)) return geoCache.get(char);
+    if (!font) return null;
+
+    const geo = new TextGeometry(char, {
+      font: font,
+      size: LETTER_SIZE,
+      height: LETTER_DEPTH,
+      curveSegments: 18,
+      bevelEnabled: true,
+      bevelThickness: LETTER_BEVEL_THICK,
+      bevelSize: LETTER_BEVEL_SIZE,
+      bevelOffset: LETTER_BEVEL_OFFSET,
+      bevelSegments: LETTER_BEVEL_SEG,
+    });
+
+    // Center on origin first so the puff is symmetric around the glyph
+    geo.computeBoundingBox();
+    let bb = geo.boundingBox;
+    const cx = (bb.max.x + bb.min.x) / 2;
+    const cy = (bb.max.y + bb.min.y) / 2;
+    const cz = (bb.max.z + bb.min.z) / 2;
+    geo.translate(-cx, -cy, -cz);
+    geo.computeVertexNormals();
+
+    // Optional puff pass — only run when LETTER_PUFF > 0 (currently
+    // disabled; documented above).
+    if (LETTER_PUFF > 0) {
+      const positions = geo.attributes.position;
+      const normals = geo.attributes.normal;
+      for (let i = 0; i < positions.count; i++) {
+        positions.setXYZ(
+          i,
+          positions.getX(i) + normals.getX(i) * LETTER_PUFF,
+          positions.getY(i) + normals.getY(i) * LETTER_PUFF,
+          positions.getZ(i) + normals.getZ(i) * LETTER_PUFF,
+        );
+      }
+      positions.needsUpdate = true;
+      geo.computeVertexNormals();
+      geo.computeBoundingBox();
+      bb = geo.boundingBox;
+    }
+
+    const w = bb.max.x - bb.min.x;
+    const h = bb.max.y - bb.min.y;
+    const cached = { geo, w, h };
+    geoCache.set(char, cached);
+    return cached;
+  }
+
+  // Auto-split a word into roughly equal lines so the layout fills the
+  // portrait poster instead of cramming into a single thin row.
+  //
+  // The aspect-ratio-aware target picks the line count that gives
+  // letters closest to a square cell on the 720×1000 stage. A user can
+  // also force breaks with `/` (treated as a manual newline).
+  function splitIntoLines(text) {
+    if (!text.length) return [''];
+
+    // Manual breaks: split on '/' first, then auto-fill each section.
+    if (text.includes('/')) {
+      return text.split('/').map(s => s.trim()).filter(s => s.length);
+    }
+
+    const n = text.length;
+    // Target letters-per-line such that each rendered cell is roughly
+    // square on a 0.72-aspect poster:
+    //   numLines = round(sqrt(n / 0.72))
+    // Bounded so a single character doesn't get its own 6-line layout.
+    const numLines = Math.max(1, Math.min(8, Math.round(Math.sqrt(n / 0.72))));
+    const perLine = Math.ceil(n / numLines);
+    const lines = [];
+    for (let i = 0; i < n; i += perLine) {
+      lines.push(text.slice(i, i + perLine));
+    }
+    return lines;
+  }
+
+  // Build a word as multiple lines, scaling up to fill the poster.
+  function buildWord(text) {
+    if (!font) return;
+
+    // Tear down old letters
+    for (const L of letters) wordGroup.remove(L.mesh);
+    letters = [];
+
+    const upper = text.toUpperCase();
+    if (!upper.length) { currentText = ''; return; }
+    currentText = upper;
+
+    // Split into lines so a 7-char word fills the portrait stage as a
+    // 3-line block instead of a thin single row.
+    const linesText = splitIntoLines(upper);
+
+    // Per-line glyph data + width
+    const lineGlyphs = [];
+    let widestLineW = 0.001;
+    for (const lineStr of linesText) {
+      const glyphs = [];
+      for (const ch of lineStr) {
+        if (ch === ' ') {
+          glyphs.push({ char: ' ', w: LETTER_SIZE * 0.5, isSpace: true });
+        } else {
+          const data = getLetterGeo(ch);
+          if (!data) continue;
+          glyphs.push({ char: ch, w: data.w, h: data.h, geo: data.geo, isSpace: false });
+        }
+      }
+      let lw = 0;
+      for (let i = 0; i < glyphs.length; i++) {
+        lw += glyphs[i].w;
+        if (i < glyphs.length - 1) lw += LETTER_GAP;
+      }
+      if (lw > widestLineW) widestLineW = lw;
+      lineGlyphs.push({ glyphs, lineW: lw });
+    }
+
+    // Block height = (numLines * SIZE) + leading between
+    const numLines = lineGlyphs.length;
+    const lineH = LETTER_SIZE * LETTER_LINE_LEAD;
+    const totalH = numLines * LETTER_SIZE + (numLines - 1) * (lineH - LETTER_SIZE);
+
+    // Visible scene bounds at z=26 / fov=20°
+    const VIEW_W = 6.6;
+    const VIEW_H = 9.17;
+
+    // Fill 92% of the poster — pick the limiting dimension
+    const FILL = 0.92;
+    const fitScale = Math.min(
+      (VIEW_W * FILL) / widestLineW,
+      (VIEW_H * FILL) / totalH,
+    );
+    wordGroup.scale.setScalar(fitScale);
+
+    // Place each line vertically centered around y=0; within each line,
+    // place glyphs centered around x=0.
+    for (let li = 0; li < numLines; li++) {
+      const { glyphs, lineW } = lineGlyphs[li];
+      // Top line at +half block, bottom at -half block
+      const restY = ((numLines - 1) / 2 - li) * lineH;
+      let cursorX = -lineW / 2;
+      for (const g of glyphs) {
+        const restX = cursorX + g.w / 2;
+        cursorX += g.w + LETTER_GAP;
+        if (g.isSpace) continue;
+
+        const mesh = new THREE.Mesh(g.geo, currentMaterial);
+        mesh.position.set(restX, restY, 0);
+        wordGroup.add(mesh);
+
+        // Collision radius — width-based (slightly under half-width)
+        // so letters at rest don't overlap their horizontal neighbors
+        // OR the letter sitting directly above/below in another line.
+        // Using max(w,h) gave overlap on tall narrow letters.
+        const radius = g.w * 0.44;
+
+        letters.push({
+          mesh, char: g.char,
+          restX, restY,
+          x: restX, y: restY,        // simulation position
+          dispX: restX, dispY: restY,// rendered position (smoothed)
+          dispRot: 0,                // rendered rotation (smoothed)
+          vx: 0, vy: 0,
+          rot: 0, vrot: 0,
+          w: g.w, h: g.h,
+          radius,
+        });
+      }
+    }
+
+    // Stash group bounds (in local scene units, undo group scale) so
+    // wall collision can clamp letter positions to the poster edges.
+    wallBoundsX = (VIEW_W * 0.5) / fitScale;
+    wallBoundsY = (VIEW_H * 0.5) / fitScale;
+  }
+
+  // Used by the physics step to bounce letters off the poster edges.
+  // Set in buildWord; reset on rebuild so wall radius matches scale.
+  let wallBoundsX = 3.3;
+  let wallBoundsY = 4.5;
+
+  // ---------------------------------------------------------------
+  // 4. Font loading
+  // ---------------------------------------------------------------
+  function loadFontAndStart() {
+    const loader = new FontLoader();
+    const url = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r160/examples/fonts/helvetiker_bold.typeface.json';
+    loader.load(url, (loaded) => {
+      font = loaded;
+      loadingEl.classList.add('hidden');
+      buildWord(currentText);
+    }, undefined, (err) => {
+      console.warn('[inflate] font load failed', err);
+      loadingEl.textContent = 'FONT LOAD FAILED';
+    });
+  }
+
+  // ---------------------------------------------------------------
+  // 5. Eye tracking — MediaPipe FaceMesh + iris landmarks
+  // ---------------------------------------------------------------
+  function initFaceMesh() {
+    faceMesh = new FaceMesh({
+      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/${f}`,
+    });
+    faceMesh.setOptions({
+      maxNumFaces: 1,
+      refineLandmarks: true,         // adds iris (468–477)
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+    });
+    faceMesh.onResults(onFaceResults);
+  }
+
+  function onFaceResults(results) {
+    lastFaceLm = (results.multiFaceLandmarks && results.multiFaceLandmarks[0]) || null;
+    if (!lastFaceLm) {
+      gazeActive = false;
+      return;
+    }
+
+    // Iris centers — 468 left, 473 right (already normalized 0..1).
+    // Webcam is mirrored visually but landmark coords are NOT mirrored
+    // by mediapipe — we mirror x ourselves so "looking left" moves the
+    // gaze cursor to the visual left of the screen.
+    const lIris = lastFaceLm[468];
+    const rIris = lastFaceLm[473];
+    if (!lIris || !rIris) { gazeActive = false; return; }
+
+    // Eye corner spans — anchor iris position relative to face.
+    // L eye: 33 outer, 133 inner. R eye: 263 outer, 362 inner.
+    const lOuter = lastFaceLm[33];
+    const lInner = lastFaceLm[133];
+    const rOuter = lastFaceLm[263];
+    const rInner = lastFaceLm[362];
+
+    // Iris position WITHIN its eye socket → independent of head pos.
+    // 0 at outer corner, 1 at inner corner.
+    const lT = (lIris.x - lOuter.x) / Math.max(0.001, (lInner.x - lOuter.x));
+    const rT = (rIris.x - rInner.x) / Math.max(0.001, (rOuter.x - rInner.x));
+
+    // For Y: use top/bottom eyelid landmarks (159 top, 145 bottom for L).
+    const lTop = lastFaceLm[159], lBot = lastFaceLm[145];
+    const lTy = (lIris.y - lTop.y) / Math.max(0.001, (lBot.y - lTop.y));
+    const rTop = lastFaceLm[386], rBot = lastFaceLm[374];
+    const rTy = (rIris.y - rTop.y) / Math.max(0.001, (rBot.y - rTop.y));
+
+    // Nose tip — used below by the HEAD track mode. Gaze no longer
+    // blends in head position; iris alone drives the cursor.
+    const nose = lastFaceLm[1];
+
+    // Raw iris position within the eye socket — averaged across both
+    // eyes. Mirrored on X so screen-x matches natural direction. The
+    // 4-corner calibration step captures extremes per-user so we never
+    // guess a gain.
+    let irisX = (lT + rT) * 0.5;        // 0 outer, 1 inner — both eyes
+    irisX = 1 - irisX;                  // mirror so screen-x = natural
+    const irisY = (lTy + rTy) * 0.5;    // 0 top, 1 bottom
+
+    // Feed the calibration loop if it's running — skip normal mapping
+    // during calibration so the gaze cursor doesn't drift while the
+    // user is staring at a corner target.
+    if (calib.active) {
+      tickCalibration(irisX, irisY);
+      return;
+    }
+
+    // Map iris into [0,1] using the per-user envelope. Using separate
+    // left/right/top/bottom axis values (averaged across the relevant
+    // two corners) handles any sign/orientation flips automatically —
+    // if looking-left produces a HIGHER irisX for this user, leftX >
+    // rightX and the mapping inverts without any special-case code.
+    const spanX = calib.rightX - calib.leftX;
+    const spanY = calib.botY   - calib.topY;
+    let nx = Math.abs(spanX) < 0.02 ? 0.5 : (irisX - calib.leftX) / spanX;
+    let ny = Math.abs(spanY) < 0.02 ? 0.5 : (irisY - calib.topY)  / spanY;
+    nx = Math.max(-0.05, Math.min(1.05, nx));
+    ny = Math.max(-0.05, Math.min(1.05, ny));
+
+    // Heavier smoothing — iris landmarks jitter ±2-3 px per frame,
+    // and that jitter becomes letter-position noise downstream. Lower
+    // alpha here is the single biggest lever for motion smoothness.
+    const SMOOTH = 0.18;
+    gazeNX += (nx - gazeNX) * SMOOTH;
+    gazeNY += (ny - gazeNY) * SMOOTH;
+
+    gazeActive = true;
+
+    // ── Head-position track (independent of gaze) ──
+    // Use nose tip (1) as the head center. It's stable, well-tracked,
+    // and moves naturally with head pan/tilt. Mirror x because webcam
+    // is mirrored: turn head right (subject's right) → nose lands on
+    // image LEFT → we want screen RIGHT.
+    const noseRaw = nose;
+    let hx = 1 - noseRaw.x;          // mirrored
+    let hy = noseRaw.y;
+
+    // Auto-calibrate baseline so user doesn't need a setup step. Same
+    // pattern as gaze — first ~20 stable frames define "looking center."
+    if (!headCalibrated) {
+      headCalibX += (hx - headCalibX) * 0.2;
+      headCalibY += (hy - headCalibY) * 0.2;
+      headCalibFrames++;
+      if (headCalibFrames > 20) headCalibrated = true;
+    }
+
+    // Relative head position [-0.5..+0.5]-ish, then heavier smoothing
+    // because translating the whole word group is more visible than
+    // gaze cursor jitter.
+    const rawHX = hx - headCalibX;
+    const rawHY = hy - headCalibY;
+    const HEAD_SMOOTH = 0.15;
+    headNX += (rawHX - headNX) * HEAD_SMOOTH;
+    headNY += (rawHY - headNY) * HEAD_SMOOTH;
+  }
+
+  // ── 4-corner gaze calibration flow ─────────────────────────────
+  // Ordered: TL → TR → BR → BL. For each step, hold for CALIB_HOLD_MS,
+  // sample iris position during the back half of the hold, and take the
+  // median. After all four, axis-wise averages give left/right/top/bot
+  // iris values that we use as the gaze envelope.
+  const calibDotEl          = document.getElementById('calib-dot');
+  const calibRootEl         = document.getElementById('calib');
+  const calibLabelEl        = document.getElementById('calib-label');
+  const calibStepEl         = document.getElementById('calib-step');
+
+  function startCalibration() {
+    calib.active = true;
+    calib.step = 0;
+    calib.samples = [];
+    calib.readings = [null, null, null, null];
+    calib.stepStart = performance.now();
+    calibRootEl.classList.remove('hidden');
+    showCalibCorner(0);
+    // Park the gaze cursor in the middle while calibrating so any
+    // letter attraction is neutralized.
+    gazeNX = 0.5; gazeNY = 0.5;
+  }
+
+  function cancelCalibration() {
+    calib.active = false;
+    calibRootEl.classList.add('hidden');
+  }
+
+  function showCalibCorner(step) {
+    const c = CALIB_CORNERS[step];
+    // Position the dot inside #stage using % units — the #stage is the
+    // relative container so this just works even with the scale-to-fit
+    // transform.
+    calibDotEl.style.left = (c.x * 100) + '%';
+    calibDotEl.style.top  = (c.y * 100) + '%';
+    calibLabelEl.textContent = c.label;
+    calibStepEl.textContent  = (step + 1) + ' / ' + CALIB_CORNERS.length;
+  }
+
+  function tickCalibration(irisX, irisY) {
+    const elapsed = performance.now() - calib.stepStart;
+    // Sample during the steady portion of the hold — skip the first
+    // portion where the user is still saccading to the target.
+    if (elapsed >= CALIB_SAMPLE_MS && elapsed < CALIB_HOLD_MS) {
+      calib.samples.push([irisX, irisY]);
+    }
+    if (elapsed >= CALIB_HOLD_MS) finalizeCalibrationStep();
+  }
+
+  function finalizeCalibrationStep() {
+    if (calib.samples.length < 4) {
+      // Not enough stable samples — reset this corner and retry.
+      calib.samples = [];
+      calib.stepStart = performance.now();
+      return;
+    }
+    const xs = calib.samples.map(s => s[0]).sort((a, b) => a - b);
+    const ys = calib.samples.map(s => s[1]).sort((a, b) => a - b);
+    const mx = xs[Math.floor(xs.length / 2)];
+    const my = ys[Math.floor(ys.length / 2)];
+    calib.readings[calib.step] = [mx, my];
+    calib.samples = [];
+    calib.step++;
+    if (calib.step < CALIB_CORNERS.length) {
+      calib.stepStart = performance.now();
+      showCalibCorner(calib.step);
+    } else {
+      finalizeCalibration();
+    }
+  }
+
+  function finalizeCalibration() {
+    // readings[0]=TL, 1=TR, 2=BR, 3=BL in gaze [0,1]² coords. Average
+    // to get axis-aligned envelope values that handle any orientation.
+    const [TL, TR, BR, BL] = calib.readings;
+    calib.leftX  = (TL[0] + BL[0]) / 2;
+    calib.rightX = (TR[0] + BR[0]) / 2;
+    calib.topY   = (TL[1] + TR[1]) / 2;
+    calib.botY   = (BL[1] + BR[1]) / 2;
+    calib.ready  = true;
+    calib.active = false;
+    calibRootEl.classList.add('hidden');
+  }
+
+  // Own the webcam stream ourselves rather than delegating to
+  // mediapipe's `Camera` helper — that helper retries internally on
+  // getUserMedia rejection, which hangs the page when permission is
+  // denied. With our own loop we can fail fast and free the camera.
+  let webcamStream = null;
+  let cameraLoopActive = false;
+
+  async function enableEyeTracking() {
+    if (eyeEnabled || cameraLoopActive) {
+      // Toggle off
+      cameraLoopActive = false;
+      if (webcamStream) {
+        for (const tr of webcamStream.getTracks()) tr.stop();
+        webcamStream = null;
+      }
+      try { webcamEl.pause(); webcamEl.srcObject = null; } catch (_) {}
+      eyeEnabled = false;
+      gazeActive = false;
+      if (calib.active) cancelCalibration();
+      eyeToggle.classList.remove('on');
+      eyeToggle.lastChild.textContent = 'EYE TRACK';
+      for (const L of letters) { L.vx = 0; L.vy = 0; L.vrot = 0; }
+      return;
+    }
+    try {
+      eyeToggle.lastChild.textContent = 'STARTING…';
+      eyeToggle.classList.remove('err');
+
+      // Permission gate — fast fail.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 640, height: 480, facingMode: 'user' },
+        audio: false,
+      });
+      webcamStream = stream;
+      webcamEl.srcObject = stream;
+      await webcamEl.play();
+
+      if (!faceMesh) initFaceMesh();
+
+      eyeEnabled = true;
+      eyeToggle.classList.add('on');
+      eyeToggle.lastChild.textContent = 'EYE TRACK';
+
+      // Kick off the 4-corner calibration as soon as the camera is
+      // live. Give FaceMesh a moment to warm up so the first corner's
+      // samples don't start on garbage landmarks.
+      setTimeout(() => {
+        if (eyeEnabled && !calib.active) startCalibration();
+      }, 450);
+
+      // Manual frame pump — calls faceMesh.send each rAF tick
+      cameraLoopActive = true;
+      const pump = async () => {
+        if (!cameraLoopActive) return;
+        try {
+          if (webcamEl.readyState >= 2 && faceMesh) {
+            await faceMesh.send({ image: webcamEl });
+          }
+        } catch (e) {
+          console.warn('[inflate] face mesh send failed', e);
+        }
+        if (cameraLoopActive) requestAnimationFrame(pump);
+      };
+      requestAnimationFrame(pump);
+
+    } catch (err) {
+      console.warn('[inflate] eye tracking failed', err);
+      cameraLoopActive = false;
+      eyeEnabled = false;
+      if (webcamStream) {
+        for (const tr of webcamStream.getTracks()) tr.stop();
+        webcamStream = null;
+      }
+      eyeToggle.classList.remove('on');
+      eyeToggle.classList.add('err');
+      eyeToggle.lastChild.textContent = 'CAM DENIED';
+    }
+  }
+
+  // Map gaze [0,1] → wordGroup-local coords. Letters live inside
+  // wordGroup (which has fitScale applied), so we divide out the
+  // group's scale here. Without this, the gaze cursor in world units
+  // is much "further" from local letter positions than physics expects
+  // and the attraction force never registers.
+  function updateGazeScene() {
+    if (!gazeActive) return;
+    const VIEW_W = 6.6;
+    const VIEW_H = 9.17;
+    const fs = (wordGroup && wordGroup.scale.x) || 1;
+    const x = (gazeNX - 0.5) * VIEW_W / fs;
+    const y = -(gazeNY - 0.5) * VIEW_H / fs;
+    gazeSX = x;
+    gazeSY = y;
+  }
+
+  // Head offset → wordGroup translation in WORLD (scene) units, NOT
+  // group-local. This is a translation of the whole group so it's
+  // applied at the parent transform level. Y inverted because image
+  // y grows down. headNX is already centered around 0.
+  const HEAD_GAIN = 7.5;        // amplification: small head turn = big shift
+  const HEAD_RANGE_X = 2.6;     // max translation in scene units
+  const HEAD_RANGE_Y = 2.0;
+  function updateHeadScene() {
+    // Even when face data is stale, decay the offset toward 0 so the
+    // text doesn't get stuck off-center if tracking drops.
+    if (!gazeActive || trackMode !== 'head') {
+      headOffsetX *= 0.9;
+      headOffsetY *= 0.9;
+      return;
+    }
+    let tx = headNX * HEAD_GAIN;
+    let ty = -headNY * HEAD_GAIN;
+    // Soft clamp to range
+    tx = Math.max(-HEAD_RANGE_X, Math.min(HEAD_RANGE_X, tx));
+    ty = Math.max(-HEAD_RANGE_Y, Math.min(HEAD_RANGE_Y, ty));
+    headOffsetX = tx;
+    headOffsetY = ty;
+  }
+
+  // ---------------------------------------------------------------
+  // 6. Per-letter physics
+  //    Spring force toward rest + gaze attraction + collision pass.
+  // ---------------------------------------------------------------
+  const PHYS = {
+    spring: 5.5,        // pull-back stiffness
+    damp: 4.6,          // critical-damping ratio ζ ≈ 0.98 — almost no
+                        // overshoot on the spring, kills oscillation
+    gazePull: 85.0,     // strong attractive force toward gaze cursor
+    gazeMaxDist: 9.0,   // long reach — every letter feels gaze influence
+    rotPull: 2.0,
+    rotDamp: 4.0,       // bumped to match — kills rotational shimmer
+    elastic: 0.55,      // softer collisions = less micro-bounce
+    wallElastic: 0.55,
+    // Letters whose simulation velocity falls below this magnitude have
+    // their velocity zeroed to stop sub-pixel jitter at rest.
+    sleepEps: 0.012,
+    // Render-position smoothing factor (per-frame lerp). Decouples the
+    // visible mesh position from the internal sim — high-frequency sim
+    // oscillation gets low-passed so the eye sees smooth motion.
+    renderSmooth: 0.32,
+  };
+
+  function tickPhysics(dt) {
+    if (!letters.length) return;
+
+    // Gaze attraction only applies in GAZE track mode. In HEAD mode
+    // the whole word translates with the head offset and individual
+    // letters hold their rest positions (just spring + collision).
+    const haveGaze = gazeActive && trackMode === 'gaze';
+
+    // Integrate
+    for (const L of letters) {
+      // Spring back to rest
+      let ax = -PHYS.spring * (L.x - L.restX);
+      let ay = -PHYS.spring * (L.y - L.restY);
+
+      // Gaze attraction — pull each letter toward the gaze cursor
+      // when it's within range. Falloff is 1/(d²+ε), capped beyond
+      // gazeMaxDist so far-away letters stay put.
+      if (haveGaze) {
+        const dx = gazeSX - L.x;
+        const dy = gazeSY - L.y;
+        const d2 = dx * dx + dy * dy;
+        const d = Math.sqrt(d2);
+        if (d < PHYS.gazeMaxDist) {
+          // Smooth proximity weight: 1 at d=0, 0 at d=gazeMaxDist
+          const prox = Math.max(0, 1 - d / PHYS.gazeMaxDist);
+          const pull = PHYS.gazePull * prox * prox;
+          if (d > 0.001) {
+            ax += (dx / d) * pull;
+            ay += (dy / d) * pull;
+          }
+        }
+      }
+
+      // Velocity damping (continuous-time)
+      ax -= L.vx * PHYS.damp;
+      ay -= L.vy * PHYS.damp;
+
+      L.vx += ax * dt;
+      L.vy += ay * dt;
+      L.x += L.vx * dt;
+      L.y += L.vy * dt;
+
+      // Rotational coupling — letters spin with their motion
+      const speed = Math.sqrt(L.vx * L.vx + L.vy * L.vy);
+      const targetVRot = (L.vx) * 0.18;     // horizontal motion → roll
+      L.vrot += (targetVRot - L.vrot) * Math.min(1, dt * PHYS.rotPull);
+      L.vrot *= Math.max(0, 1 - dt * PHYS.rotDamp);
+      L.rot += L.vrot * dt + speed * 0.0;
+      // Gentle pull rotation back to 0
+      L.rot += (-L.rot) * Math.min(1, dt * 1.5);
+    }
+
+    // Collision pass — pairwise circle-circle. Letters per word ≤ 14
+    // so n² is fine. Move overlapping pairs apart along the connecting
+    // axis and exchange velocities along that axis.
+    for (let i = 0; i < letters.length; i++) {
+      for (let j = i + 1; j < letters.length; j++) {
+        const A = letters[i], B = letters[j];
+        const dx = B.x - A.x;
+        const dy = B.y - A.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const minDist = A.radius + B.radius;
+        if (dist >= minDist || dist < 0.0001) continue;
+
+        const nx = dx / dist;
+        const ny = dy / dist;
+        const overlap = (minDist - dist) * 0.5;
+        // Separate
+        A.x -= nx * overlap;
+        A.y -= ny * overlap;
+        B.x += nx * overlap;
+        B.y += ny * overlap;
+
+        // Velocity exchange along normal — only if approaching
+        const vrel = (B.vx - A.vx) * nx + (B.vy - A.vy) * ny;
+        if (vrel < 0) {
+          const j_ = -(1 + PHYS.elastic) * vrel * 0.5;
+          A.vx -= j_ * nx;
+          A.vy -= j_ * ny;
+          B.vx += j_ * nx;
+          B.vy += j_ * ny;
+        }
+      }
+    }
+
+    // Wall collision — bounce off the poster edges so dragged letters
+    // ricochet around the frame instead of escaping it. Bounds are in
+    // local group units (already accounting for fitScale).
+    for (const L of letters) {
+      const lx = wallBoundsX - L.radius;
+      const ly = wallBoundsY - L.radius;
+      if (L.x > lx)  { L.x = lx;  if (L.vx > 0) L.vx = -L.vx * PHYS.wallElastic; }
+      if (L.x < -lx) { L.x = -lx; if (L.vx < 0) L.vx = -L.vx * PHYS.wallElastic; }
+      if (L.y > ly)  { L.y = ly;  if (L.vy > 0) L.vy = -L.vy * PHYS.wallElastic; }
+      if (L.y < -ly) { L.y = -ly; if (L.vy < 0) L.vy = -L.vy * PHYS.wallElastic; }
+    }
+
+    // Sleep + render-position smoothing.
+    // - Velocity below sleepEps gets zeroed when the letter is also
+    //   essentially at rest (close to its rest position OR no gaze
+    //   force pulling it). Removes the sub-pixel vibration that
+    //   otherwise persists indefinitely from spring + damp + collision.
+    // - Rendered position lerps toward the simulation position so the
+    //   eye sees a low-passed signal even if the sim ticks tightly.
+    const k = PHYS.renderSmooth;
+    for (const L of letters) {
+      const speed2 = L.vx * L.vx + L.vy * L.vy;
+      if (speed2 < PHYS.sleepEps * PHYS.sleepEps && !haveGaze) {
+        L.vx = 0; L.vy = 0; L.vrot = 0;
+      }
+      L.dispX += (L.x - L.dispX) * k;
+      L.dispY += (L.y - L.dispY) * k;
+      L.dispRot += (L.rot - L.dispRot) * k;
+      L.mesh.position.x = L.dispX;
+      L.mesh.position.y = L.dispY;
+      L.mesh.rotation.z = L.dispRot;
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // 7. Render loop
+  // ---------------------------------------------------------------
+  let lastT = performance.now();
+  let frameCount = 0;
+  function tick(now) {
+    frameCount++;
+    const dtRaw = (now - lastT) / 1000;
+    lastT = now;
+    const dt = Math.min(dtRaw, 1 / 30);  // clamp dt to keep physics stable
+    if (!paused) t += dt;
+
+    // Idle target — slight breath sway when no recent input
+    const idleFor = (performance.now() - lastInputT) / 1000;
+    if (!dragging && idleFor > 1.5) {
+      const breathe = Math.sin(t * 0.6) * 0.10;
+      targetRotY += (breathe - targetRotY) * 0.005;
+      targetRotX += (-0.04 + Math.sin(t * 0.4) * 0.04 - targetRotX) * 0.005;
+    }
+
+    if (!dragging) {
+      targetRotY += velY;
+      targetRotX += velX;
+      velY *= 0.94;
+      velX *= 0.94;
+      targetRotX = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, targetRotX));
+    }
+
+    rotY += (targetRotY - rotY) * 0.18;
+    rotX += (targetRotX - rotX) * 0.18;
+
+    if (wordGroup) {
+      wordGroup.rotation.x = rotX;
+      wordGroup.rotation.y = rotY;
+      // Head-tracking translation. Apply to wordGroup.position via a
+      // smoothed display offset so the move is buttery rather than
+      // tracking-jitter-noisy. Render offset lerps toward sim offset.
+      headDispX += (headOffsetX - headDispX) * 0.18;
+      headDispY += (headOffsetY - headDispY) * 0.18;
+      wordGroup.position.x = headDispX;
+      wordGroup.position.y = headDispY;
+    }
+
+    updateGazeScene();
+    updateHeadScene();
+    tickPhysics(dt);
+    renderer.render(scene, camera);
+    drawOverlay();
+
+    requestAnimationFrame(tick);
+  }
+
+  function drawOverlay() {
+    overlayCtx.clearRect(0, 0, POSTER_W, POSTER_H);
+
+    // Gaze marker — small ring rendered into overlay at the gaze
+    // location. Only meaningful in GAZE track mode.
+    if (gazeActive && trackMode === 'gaze') {
+      const VIEW_W = 6.6;
+      const VIEW_H = 9.17;
+      const px = (gazeNX) * POSTER_W;
+      const py = (gazeNY) * POSTER_H;
+      overlayCtx.save();
+      overlayCtx.strokeStyle = invert ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.55)';
+      overlayCtx.lineWidth = 1.2;
+      overlayCtx.beginPath();
+      overlayCtx.arc(px, py, 18, 0, Math.PI * 2);
+      overlayCtx.stroke();
+      overlayCtx.beginPath();
+      overlayCtx.arc(px, py, 2.5, 0, Math.PI * 2);
+      overlayCtx.fillStyle = invert ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.7)';
+      overlayCtx.fill();
+      overlayCtx.restore();
+    }
+
+    if (!window.POSTER_SYSTEM) return;
+    // TRACK label is "TRACK · WHAT-IT-DOES · SOURCE"
+    const labelTrack = trackMode.toUpperCase();
+    const source = eyeEnabled
+      ? (gazeActive ? 'EYE' : 'LOST')
+      : (mouseGaze ? 'MOUSE' : 'OFF');
+    const eyeStr = labelTrack + ' · ' + source;
+    POSTER_SYSTEM.drawOverlay(overlayCtx, {
+      experimentId: '07',
+      seriesName: 'INFLATE',
+      // verticalContent is appended after seriesName by POSTER_SYSTEM
+      // (joined with " · ") — passing the current material mode there
+      // gives a "SERIES · STATE" label like the rest of the gallery.
+      verticalContent: mode.toUpperCase(),
+      topRight: eyeStr,
+      bottomRight: 'WORD · ' + currentText,
+      // Label bg should be the OPPOSITE of paper color or it blends.
+      // `invert` is the stage theme — light cream paper (default) →
+      // dark labels, dark stage → light labels. So we pass !invert.
+      invert: !invert,
+      hidden: overlayHidden,
+      // Bump default 10/16 to 13/20 so the tags are legible at the
+      // poster's typical screen render size (~600 px wide).
+      fontSize: 13,
+      labelH: 20,
+      labelPadX: 10,
+      edgePad: 16,
+      posterW: POSTER_W,
+      posterH: POSTER_H,
+    });
+  }
+
+  // ---------------------------------------------------------------
+  // 8. Input handlers
+  // ---------------------------------------------------------------
+  function bindInput() {
+    // Pointer drag rotates the whole word group
+    glCanvas.addEventListener('pointerdown', (e) => {
+      dragging = true;
+      lastPx = e.clientX; lastPy = e.clientY;
+      velX = 0; velY = 0;
+      stage.classList.add('dragging');
+      glCanvas.setPointerCapture(e.pointerId);
+      lastInputT = performance.now();
+      showHud();
+    });
+    glCanvas.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const rect = stage.getBoundingClientRect();
+      const dx = (e.clientX - lastPx) / rect.width;
+      const dy = (e.clientY - lastPy) / rect.height;
+      const ROT_GAIN = 4.0;
+      targetRotY += dx * ROT_GAIN;
+      targetRotX += dy * ROT_GAIN;
+      targetRotX = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, targetRotX));
+      velY = dx * ROT_GAIN * 0.3;
+      velX = dy * ROT_GAIN * 0.3;
+      lastPx = e.clientX; lastPy = e.clientY;
+      lastInputT = performance.now();
+    });
+    const endDrag = (e) => {
+      if (!dragging) return;
+      dragging = false;
+      stage.classList.remove('dragging');
+      try { glCanvas.releasePointerCapture(e.pointerId); } catch (_) {}
+    };
+    glCanvas.addEventListener('pointerup', endDrag);
+    glCanvas.addEventListener('pointercancel', endDrag);
+
+    // Text input — rebuild word on every change (debounced via rAF)
+    let inputPending = false;
+    textInput.addEventListener('input', () => {
+      if (inputPending) return;
+      inputPending = true;
+      requestAnimationFrame(() => {
+        inputPending = false;
+        const v = textInput.value.trim();
+        buildWord(v || ' ');
+      });
+    });
+    // Suppress global keyboard shortcuts while typing in the field
+    textInput.addEventListener('keydown', (e) => e.stopPropagation());
+
+    // Mode toggle (BLACK / GRADIENT / AURORA / RUBBER / CHROME)
+    modeToggle.addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      setMode(btn.dataset.mode);
+    });
+
+    // Track mode toggle (GAZE / HEAD) — switches what the eye tracker
+    // (or mouse fallback) actually does to the text.
+    const trackToggle = document.getElementById('track-toggle');
+    trackToggle.addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      trackMode = btn.dataset.track;
+      trackToggle.querySelectorAll('button').forEach(b => {
+        b.classList.toggle('active', b.dataset.track === trackMode);
+      });
+      // Reset offsets on switch so we don't carry over phantom state
+      if (trackMode === 'gaze') {
+        headOffsetX = 0; headOffsetY = 0;
+        headDispX = 0;   headDispY = 0;
+        if (wordGroup) { wordGroup.position.set(0, 0, 0); }
+        // Also clear the cached headNX/Y so a moused hover stays put
+        headNX = 0; headNY = 0;
+      } else {
+        // In HEAD mode any pre-existing letter velocities should die
+        for (const L of letters) {
+          L.x = L.restX; L.y = L.restY;
+          L.dispX = L.restX; L.dispY = L.restY;
+          L.vx = 0; L.vy = 0; L.rot = 0; L.vrot = 0; L.dispRot = 0;
+        }
+      }
+    });
+
+    // Eye tracking toggle
+    eyeToggle.addEventListener('click', () => enableEyeTracking());
+
+    // Global keys
+    window.addEventListener('keydown', (e) => {
+      if (document.activeElement === textInput) return;
+      showHud();
+
+      if (e.key === ' ') {
+        // Snap all letters back to rest (sim AND render position so
+        // the smoothing pass doesn't slow-mo the snap).
+        for (const L of letters) {
+          L.x = L.restX; L.y = L.restY;
+          L.dispX = L.restX; L.dispY = L.restY;
+          L.vx = 0; L.vy = 0;
+          L.rot = 0; L.vrot = 0;
+          L.dispRot = 0;
+        }
+        e.preventDefault();
+        return;
+      }
+      if (e.key === 'i' || e.key === 'I') {
+        invert = !invert;
+        stage.style.background = invert ? '#0d0c10' : '#f1eee8';
+        loadingEl.style.color = invert ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)';
+        return;
+      }
+      if (e.key === 'h' || e.key === 'H') {
+        overlayHidden = !overlayHidden;
+        return;
+      }
+      if (e.key === 'p' || e.key === 'P') {
+        paused = !paused;
+        return;
+      }
+      if (e.key === 's' || e.key === 'S') {
+        savePoster();
+        return;
+      }
+      if (e.key === 'r' || e.key === 'R') {
+        // Cycle modes for quick A/B
+        const order = ['black', 'gradient', 'aurora', 'rubber', 'chrome'];
+        const i = order.indexOf(mode);
+        setMode(order[(i + 1) % order.length]);
+        return;
+      }
+      if (e.key === 'c' || e.key === 'C') {
+        // Re-run the 4-corner gaze calibration. Only meaningful when
+        // the camera is live; otherwise no iris readings flow in.
+        if (eyeEnabled && !calib.active) startCalibration();
+        return;
+      }
+    });
+
+    window.addEventListener('mousemove', showHud);
+    window.addEventListener('resize', fitStage);
+
+    // Mouse-driven fallback — when eye tracking is off, hovering the
+    // stage drives whichever interaction is active.
+    //   GAZE mode: cursor position → gaze cursor (existing behavior)
+    //   HEAD mode: cursor offset from center → head translation
+    // Disabled while pointer-dragging so rotation doesn't double as
+    // an interaction gesture.
+    stage.addEventListener('mousemove', (e) => {
+      if (eyeEnabled || dragging) return;
+      const rect = stage.getBoundingClientRect();
+      const u = (e.clientX - rect.left) / rect.width;
+      const v = (e.clientY - rect.top) / rect.height;
+      if (trackMode === 'gaze') {
+        gazeNX = u;
+        gazeNY = v;
+      } else {
+        // Mouse offset from center → head offset. We map directly to
+        // the smoothed headNX/Y the FaceMesh path also writes to.
+        headNX = (u - 0.5);
+        headNY = (v - 0.5);
+      }
+      gazeActive = true;
+      mouseGaze = true;
+    });
+    stage.addEventListener('mouseleave', () => {
+      if (mouseGaze) {
+        gazeActive = false; mouseGaze = false;
+        // Decay head offset toward center on leave
+        if (trackMode === 'head') { headNX = 0; headNY = 0; }
+      }
+    });
+  }
+  // True when gaze is being driven by the mouse fallback (so we don't
+  // confuse it with eye-tracking gaze in the overlay status string).
+  let mouseGaze = false;
+
+  // ---------------------------------------------------------------
+  // 9. Save — composite GL + overlay into a single PNG
+  // ---------------------------------------------------------------
+  function savePoster() {
+    renderer.render(scene, camera);
+    const composite = document.createElement('canvas');
+    composite.width = POSTER_W;
+    composite.height = POSTER_H;
+    const cctx = composite.getContext('2d');
+    cctx.fillStyle = invert ? '#0d0c10' : '#f1eee8';
+    cctx.fillRect(0, 0, POSTER_W, POSTER_H);
+    // Soft floor shadow to match the live stage
+    const sh = cctx.createRadialGradient(
+      POSTER_W / 2, POSTER_H * 0.6, 0,
+      POSTER_W / 2, POSTER_H * 0.6, POSTER_W * 0.45
+    );
+    sh.addColorStop(0, 'rgba(0,0,0,0.28)');
+    sh.addColorStop(0.4, 'rgba(0,0,0,0.14)');
+    sh.addColorStop(0.75, 'rgba(0,0,0,0)');
+    cctx.fillStyle = sh;
+    cctx.fillRect(0, POSTER_H * 0.4, POSTER_W, POSTER_H * 0.4);
+
+    cctx.drawImage(glCanvas, 0, 0, POSTER_W, POSTER_H);
+    const prevHidden = overlayHidden;
+    overlayHidden = false;
+    drawOverlay();
+    cctx.drawImage(overlayCanvas, 0, 0);
+    overlayHidden = prevHidden;
+    composite.toBlob((blob) => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'inflate-' + currentText + '-' + mode + '-' + Date.now() + '.png';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }, 'image/png');
+  }
+
+  // ---------------------------------------------------------------
+  // 10. Layout
+  // ---------------------------------------------------------------
+  function fitStage() {
+    const ratio = POSTER_W / POSTER_H;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let cw, ch;
+    if (vw / vh > ratio) {
+      ch = vh * 0.92;
+      cw = ch * ratio;
+    } else {
+      cw = vw * 0.92;
+      ch = cw / ratio;
+    }
+    const scale = cw / POSTER_W;
+    stage.style.transform = `scale(${scale})`;
+  }
+
+  function showHud() {
+    document.body.classList.remove('idle');
+    if (hudTimer) clearTimeout(hudTimer);
+    hudTimer = setTimeout(() => document.body.classList.add('idle'), 3500);
+  }
+
+  // ---------------------------------------------------------------
+  // Boot
+  // ---------------------------------------------------------------
+  initThree();
+  bindInput();
+  fitStage();
+  loadFontAndStart();
+  showHud();
+  requestAnimationFrame(tick);
+
+  // Debug bridge — exposed only to make manual smoke testing possible
+  // from devtools / preview eval. Letters live in module scope; this
+  // gives a tiny window into them without touching production behavior.
+  window.__inflateDebug = {
+    state: () => ({
+      frame: frameCount,
+      mode, trackMode,
+      gazeActive, mouseGaze, eyeEnabled, dragging,
+      gazeNX: gazeNX.toFixed(3), gazeNY: gazeNY.toFixed(3),
+      gazeSX: gazeSX.toFixed(3), gazeSY: gazeSY.toFixed(3),
+      headNX: headNX.toFixed(3), headNY: headNY.toFixed(3),
+      headOffset: [headOffsetX.toFixed(2), headOffsetY.toFixed(2)],
+      fitScale: wordGroup ? wordGroup.scale.x.toFixed(3) : '-',
+      groupPos: wordGroup ? [wordGroup.position.x.toFixed(2), wordGroup.position.y.toFixed(2)] : null,
+      letterPositions: letters.map(L => ({
+        char: L.char,
+        rest: [L.restX.toFixed(2), L.restY.toFixed(2)],
+        cur:  [L.x.toFixed(2),     L.y.toFixed(2)],
+      })),
+    }),
+    setGaze: (nx, ny) => {
+      gazeNX = nx; gazeNY = ny;
+      gazeActive = true; mouseGaze = true;
+    },
+    setHead: (hx, hy) => {
+      headNX = hx; headNY = hy;
+      gazeActive = true; mouseGaze = true;
+    },
+    setTrackMode: (m) => {
+      const btn = document.querySelector(`#track-toggle button[data-track="${m}"]`);
+      if (btn) btn.click();
+    },
+  };
+
+  </script>
+</body>
+</html>

@@ -151,12 +151,30 @@
     } catch (e) {}
   }
 
+  // Preserve the host poster's pre-existing inline transform (e.g.
+  // Inflate's `transform: scale(...)` fit-to-viewport). When we enter
+  // EDIT/ON we replace it with matrix3d; when we return to OFF we put
+  // the saved transform back. Otherwise we'd silently wipe whatever
+  // the poster set.
+  let savedTransform = null;
+  let savedOrigin    = null;
+
   function applyTransform() {
     if (!targetEl) return;
     if (state === 'off') {
-      targetEl.style.transform = '';
-      targetEl.style.transformOrigin = '';
+      if (savedTransform !== null) {
+        targetEl.style.transform = savedTransform;
+        targetEl.style.transformOrigin = savedOrigin || '';
+        savedTransform = null;
+        savedOrigin = null;
+      }
       return;
+    }
+    // Entering a warp — snapshot whatever inline transform the poster
+    // was using so we can restore it later.
+    if (savedTransform === null) {
+      savedTransform = targetEl.style.transform || '';
+      savedOrigin    = targetEl.style.transformOrigin || '';
     }
     const rect = targetEl.getBoundingClientRect();
     const cw = rect.width;
@@ -365,13 +383,17 @@
   function init(opts) {
     opts = opts || {};
     const sel = opts.target || '#sketch';
-    targetEl = typeof sel === 'string' ? document.querySelector(sel) : sel;
-    if (!targetEl) {
-      // Target not in the DOM yet — retry after a tick in case
-      // the poster script hasn't finished building the layout.
-      setTimeout(() => init(opts), 100);
+    const found = typeof sel === 'string' ? document.querySelector(sel) : sel;
+    if (!found) {
+      // Target not in the DOM yet — retry after a tick in case the
+      // poster script hasn't finished building the layout. But don't
+      // overwrite an already-initialized target: if the poster called
+      // init({target: '#stage'}) explicitly, a later auto-init pass
+      // looking for '#sketch' must not clobber it.
+      if (!targetEl) setTimeout(() => init(opts), 100);
       return;
     }
+    targetEl = found;
     loadState();
     updateUI();
 

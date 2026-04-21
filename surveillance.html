@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Surveillance — Multi-face Eye Grid</title>
+    <meta name="description" content="Live ring-buffer grid of bitmap-dithered eye crops from every face in view.">
+    <meta property="og:title" content="Surveillance — Multi-face Eye Grid">
+    <meta property="og:description" content="A continuous 24-cell mosaic that follows everyone in the room.">
+    <meta name="theme-color" content="#0A0A0A">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            background: #0A0A0A;
+            overflow: hidden;
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            color: #fff;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        #stage {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 24px;
+        }
+        #sketch {
+            position: relative;
+            box-shadow: 0 30px 120px rgba(0, 0, 0, 0.55);
+            background: #FFFFFF;
+        }
+        #sketch canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        #webcam {
+            position: absolute;
+            top: 0; left: 0;
+            width: 1px; height: 1px;
+            opacity: 0;
+            pointer-events: none;
+        }
+        #output  { z-index: 1; }
+        #overlay { z-index: 2; pointer-events: none; }
+
+        .back {
+            position: fixed;
+            top: 22px; left: 24px;
+            z-index: 110;
+            font-size: 9px;
+            font-weight: 500;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.3);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+        .back:hover { color: rgba(255, 255, 255, 0.85); }
+
+        .panel {
+            position: fixed;
+            z-index: 110;
+            top: 22px; right: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            align-items: flex-end;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 10px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+        .btn {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.15);
+            color: rgba(255,255,255,0.7);
+            padding: 10px 22px;
+            font-family: inherit;
+            font-size: inherit;
+            letter-spacing: inherit;
+            text-transform: inherit;
+            cursor: pointer;
+            transition: all 0.2s;
+            border-radius: 0;
+            min-width: 150px;
+            text-align: center;
+        }
+        .btn:hover:not(:disabled) {
+            background: rgba(255,255,255,0.12);
+            color: #fff;
+            border-color: rgba(255,255,255,0.45);
+        }
+        .btn:disabled { opacity: 0.25; cursor: not-allowed; }
+        .btn.primary {
+            background: rgba(255,255,255,0.92);
+            color: #0A0A0A;
+            border-color: transparent;
+        }
+        .btn.primary:hover:not(:disabled) { background: #fff; }
+
+        .status {
+            position: fixed;
+            z-index: 110;
+            bottom: 22px; left: 24px;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 9px;
+            font-weight: 500;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: rgba(255,255,255,0.45);
+            display: flex;
+            gap: 14px;
+            align-items: center;
+        }
+        .dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.2);
+            transition: background 0.2s;
+        }
+        .dot.loading { background: rgba(255,255,255,0.5); animation: pulse 1.2s infinite; }
+        .dot.live    { background: #ff3b3b; box-shadow: 0 0 10px #ff3b3b; animation: pulse 1.2s infinite; }
+        .dot.ready   { background: #6de18b; }
+        .dot.error   { background: #ffb03b; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50%      { opacity: 0.35; }
+        }
+
+        .meta {
+            position: fixed;
+            z-index: 110;
+            bottom: 22px; right: 24px;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 9px;
+            font-weight: 500;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: rgba(255,255,255,0.22);
+            text-align: right;
+            line-height: 1.6;
+        }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/face_mesh.js" crossorigin="anonymous"></script>
+    <script src="poster-system.js"></script>
+    <script src="projection-mapping.js"></script>
+</head>
+<body>
+
+    <a href="index.html" class="back">&larr; Back</a>
+
+    <div id="stage">
+        <div id="sketch">
+            <video id="webcam" autoplay playsinline muted></video>
+            <canvas id="output"></canvas>
+            <canvas id="overlay"></canvas>
+        </div>
+    </div>
+
+    <div class="panel">
+        <button class="btn primary" id="btn-pause">Pause</button>
+        <button class="btn" id="btn-clear">Clear Grid</button>
+        <button class="btn" id="btn-save">Save PNG</button>
+    </div>
+
+    <div class="status">
+        <span class="dot loading" id="dot"></span>
+        <span id="status-text">Loading FaceMesh…</span>
+    </div>
+
+    <div class="meta">
+        Experiment 06 · Surveillance<br>
+        Ring buffer · up to 3 faces · 12 Hz<br>
+        H overlay · P projection · S save
+    </div>
+
+    <script>
+    // ============================================================
+    // SURVEILLANCE — Continuous multi-face eye-grid
+    // Up to 3 faces detected per frame. Every tick, each visible
+    // face's eyes are cropped, dithered, and written to the next
+    // slot of a 24-cell ring buffer. Oldest cell is always the
+    // next to be overwritten. Runs forever once the camera sees
+    // a face.
+    // ============================================================
+
+    const POSTER_W = 660;
+    const POSTER_H = 900;
+
+    const GRID_COLS = 4;
+    const GRID_ROWS = 6;
+    const TOTAL_SLOTS = GRID_COLS * GRID_ROWS; // 24
+    const TICK_HZ = 12;
+    const TICK_MS = 1000 / TICK_HZ;
+    const MAX_FACES = 3;
+
+    // --- DOM ---
+    const sketch     = document.getElementById('sketch');
+    const video      = document.getElementById('webcam');
+    const output     = document.getElementById('output');
+    const overlay    = document.getElementById('overlay');
+    const octx       = output.getContext('2d');
+    const lctx       = overlay.getContext('2d');
+    const btnPause   = document.getElementById('btn-pause');
+    const btnClear   = document.getElementById('btn-clear');
+    const btnSave    = document.getElementById('btn-save');
+    const statusText = document.getElementById('status-text');
+    const dot        = document.getElementById('dot');
+
+    output.width  = POSTER_W;  output.height  = POSTER_H;
+    overlay.width = POSTER_W;  overlay.height = POSTER_H;
+
+    const webcamCanvas = document.createElement('canvas');
+    webcamCanvas.width  = POSTER_W;
+    webcamCanvas.height = POSTER_H;
+    const wctx = webcamCanvas.getContext('2d');
+
+    function resizeSketch() {
+        const pad = 80;
+        const availW = window.innerWidth - pad * 2;
+        const availH = window.innerHeight - pad * 2;
+        const ratio  = POSTER_W / POSTER_H;
+        let w, h;
+        if (ratio < availW / availH) { h = availH; w = h * ratio; }
+        else                          { w = availW; h = w / ratio; }
+        sketch.style.width  = w + 'px';
+        sketch.style.height = h + 'px';
+    }
+    window.addEventListener('resize', resizeSketch);
+    resizeSketch();
+
+    paintWhite();
+    drawWaitingText();
+
+    function paintWhite() {
+        octx.fillStyle = '#FFFFFF';
+        octx.fillRect(0, 0, POSTER_W, POSTER_H);
+    }
+
+    function drawWaitingText() {
+        octx.save();
+        octx.fillStyle = '#0A0A0A';
+        octx.textAlign = 'center';
+        octx.textBaseline = 'middle';
+        octx.font = '500 12px "IBM Plex Mono", monospace';
+        octx.fillText('S C A N N I N G   F O R   F A C E', POSTER_W / 2, POSTER_H / 2 - 14);
+        octx.font = '500 9px "IBM Plex Mono", monospace';
+        octx.fillStyle = 'rgba(10,10,10,0.5)';
+        octx.fillText('· · · · · · · · · · · · · · · · · · · ·', POSTER_W / 2, POSTER_H / 2 + 10);
+        octx.restore();
+    }
+
+    // --- FaceMesh eye landmark groups ---
+    const LEFT_EYE  = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246];
+    const RIGHT_EYE = [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398];
+
+    // --- State ---
+    let faceMesh     = null;
+    let camera       = null;
+    let lastFaces    = [];
+    let phase        = 'loading'; // 'loading' | 'running' | 'paused' | 'error'
+    let tickTimer    = null;
+    let ringPointer  = 0;
+    let writesCount  = 0;
+    let overlayHidden = false; // H toggles the POSTER_SYSTEM identity tags
+    const slotUpdated = new Array(TOTAL_SLOTS).fill(0); // timestamps for overlay fade
+
+    function setStatus(text, state) {
+        statusText.textContent = text;
+        dot.className = 'dot ' + (state || '');
+    }
+
+    function updateStatus() {
+        const n = lastFaces.length;
+        const faceLabel = n === 0 ? 'no face' : (n === 1 ? '1 face' : n + ' faces');
+        const prefix = phase === 'paused' ? 'PAUSED' : 'LIVE';
+        const dotState = phase === 'paused' ? 'ready' : 'live';
+        setStatus(prefix + ' · ' + faceLabel + ' · ' + writesCount + ' writes', dotState);
+    }
+
+    // ============================================================
+    // Face mesh pipeline
+    // ============================================================
+
+    function initFaceMesh() {
+        faceMesh = new FaceMesh({
+            locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/${f}`,
+        });
+        faceMesh.setOptions({
+            maxNumFaces: MAX_FACES,
+            refineLandmarks: false, // iris refinement not needed → faster
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5,
+        });
+        faceMesh.onResults(onResults);
+    }
+
+    function onResults(results) {
+        lastFaces = results.multiFaceLandmarks || [];
+        drawCover(wctx, results.image, POSTER_W, POSTER_H);
+        if (phase === 'running' || phase === 'paused') updateStatus();
+    }
+
+    async function initCamera() {
+        const cam = new Camera(video, {
+            onFrame: async () => {
+                if (faceMesh) await faceMesh.send({ image: video });
+            },
+            width: 1280,
+            height: 720,
+        });
+        await cam.start();
+        camera = cam;
+    }
+
+    // ============================================================
+    // Drawing helpers
+    // ============================================================
+
+    function drawCover(ctx, source, dw, dh) {
+        const sw = source.videoWidth  || source.width;
+        const sh = source.videoHeight || source.height;
+        if (!sw || !sh) return;
+        const sr = sw / sh;
+        const dr = dw / dh;
+        let sx, sy, swC, shC;
+        if (sr > dr) {
+            shC = sh;  swC = sh * dr;
+            sx = (sw - swC) / 2;  sy = 0;
+        } else {
+            swC = sw;  shC = sw / dr;
+            sx = 0;  sy = (sh - shC) / 2;
+        }
+        ctx.save();
+        ctx.translate(dw, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(source, sx, sy, swC, shC, 0, 0, dw, dh);
+        ctx.restore();
+    }
+
+    // ============================================================
+    // Eye region — takes landmarks for one face
+    // ============================================================
+
+    function computeEyesBox(lm, W, H) {
+        const mirror = (i) => ({ x: (1 - lm[i].x) * W, y: lm[i].y * H });
+
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        const idxs = LEFT_EYE.concat(RIGHT_EYE);
+        for (const i of idxs) {
+            const p = mirror(i);
+            if (p.x < minX) minX = p.x;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.y > maxY) maxY = p.y;
+        }
+        const w = maxX - minX, h = maxY - minY;
+        const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+
+        const padX = w * 0.20;
+        const padY = h * 1.40;
+
+        let bx = minX - padX;
+        let by = cy - (h / 2 + padY);
+        let bw = w + padX * 2;
+        let bh = h + padY * 2;
+
+        const cellAspect = (POSTER_W / GRID_COLS) / (POSTER_H / GRID_ROWS);
+        const curAspect  = bw / bh;
+        if (curAspect > cellAspect) {
+            const newH = bw / cellAspect;
+            by = cy - newH / 2;
+            bh = newH;
+        } else {
+            const newW = bh * cellAspect;
+            bx = cx - newW / 2;
+            bw = newW;
+        }
+        return { x: bx, y: by, w: bw, h: bh };
+    }
+
+    // ============================================================
+    // Bayer-ordered B&W dither (4×4)
+    // ============================================================
+
+    const BAYER_4 = [
+        [ 0,  8,  2, 10],
+        [12,  4, 14,  6],
+        [ 3, 11,  1,  9],
+        [15,  7, 13,  5],
+    ];
+
+    function applyBayerDither(ctx, x, y, w, h) {
+        x = Math.round(x); y = Math.round(y);
+        w = Math.round(w); h = Math.round(h);
+        if (w <= 0 || h <= 0) return;
+        const img = ctx.getImageData(x, y, w, h);
+        const d = img.data;
+        for (let py = 0; py < h; py++) {
+            const row = BAYER_4[py & 3];
+            for (let px = 0; px < w; px++) {
+                const i = (py * w + px) * 4;
+                let lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+                lum = (lum - 128) * 1.35 + 128;
+                if (lum < 0) lum = 0; else if (lum > 255) lum = 255;
+                const threshold = (row[px & 3] + 0.5) * (255 / 16);
+                const v = lum > threshold ? 255 : 0;
+                d[i] = v; d[i + 1] = v; d[i + 2] = v;
+            }
+        }
+        ctx.putImageData(img, x, y);
+    }
+
+    // ============================================================
+    // Slot rendering — writes one face's eyes to a given cell
+    // ============================================================
+
+    function cellGeom(i) {
+        const cellW = POSTER_W / GRID_COLS;
+        const cellH = POSTER_H / GRID_ROWS;
+        const col = i % GRID_COLS;
+        const row = Math.floor(i / GRID_COLS);
+        return { cx: col * cellW, cy: row * cellH, cellW, cellH };
+    }
+
+    function renderSlot(i, face) {
+        const { cx, cy, cellW, cellH } = cellGeom(i);
+        const box = computeEyesBox(face, POSTER_W, POSTER_H);
+
+        const sx = Math.max(0, box.x);
+        const sy = Math.max(0, box.y);
+        const sw = Math.min(POSTER_W - sx, box.w - (sx - box.x));
+        const sh = Math.min(POSTER_H - sy, box.h - (sy - box.y));
+
+        octx.save();
+        octx.beginPath();
+        octx.rect(cx, cy, cellW, cellH);
+        octx.clip();
+        octx.fillStyle = '#FFFFFF';
+        octx.fillRect(cx, cy, cellW, cellH);
+
+        if (sw > 0 && sh > 0) {
+            const cover = Math.max(cellW / sw, cellH / sh);
+            const dw = sw * cover;
+            const dh = sh * cover;
+            const dx = cx + (cellW - dw) / 2;
+            const dy = cy + (cellH - dh) / 2;
+            octx.drawImage(webcamCanvas, sx, sy, sw, sh, dx, dy, dw, dh);
+        }
+        octx.restore();
+
+        applyBayerDither(octx, cx, cy, cellW, cellH);
+        slotUpdated[i] = performance.now();
+    }
+
+    // ============================================================
+    // Ring-buffer tick — writes one slot per visible face
+    // ============================================================
+
+    function tick() {
+        if (phase !== 'running') return;
+        if (!lastFaces || lastFaces.length === 0) return;
+
+        // Clear the scanning placeholder the first time we write
+        if (writesCount === 0) paintWhite();
+
+        // Up to MAX_FACES faces per tick — one slot each
+        const n = Math.min(lastFaces.length, MAX_FACES);
+        for (let k = 0; k < n; k++) {
+            renderSlot(ringPointer, lastFaces[k]);
+            ringPointer = (ringPointer + 1) % TOTAL_SLOTS;
+            writesCount++;
+        }
+        updateStatus();
+    }
+
+    // ============================================================
+    // Overlay — subtle fade-out frame on recently-written cells
+    // ============================================================
+
+    function drawHighlights() {
+        lctx.clearRect(0, 0, POSTER_W, POSTER_H);
+        const now = performance.now();
+        const FADE_MS = 320;
+        for (let i = 0; i < TOTAL_SLOTS; i++) {
+            const age = now - slotUpdated[i];
+            if (age < 0 || age > FADE_MS) continue;
+            const alpha = 1 - age / FADE_MS;
+            const { cx, cy, cellW, cellH } = cellGeom(i);
+            lctx.strokeStyle = 'rgba(10,10,10,' + (alpha * 0.6).toFixed(3) + ')';
+            lctx.lineWidth = 1;
+            lctx.strokeRect(cx + 0.5, cy + 0.5, cellW - 1, cellH - 1);
+        }
+        drawPosterOverlay(lctx, overlayHidden);
+        requestAnimationFrame(drawHighlights);
+    }
+
+    function drawPosterOverlay(ctx, hidden) {
+        if (!window.POSTER_SYSTEM) return;
+        const n = lastFaces.length;
+        const faceLabel = n === 0 ? 'NO FACE' : (n === 1 ? '1 FACE' : n + ' FACES');
+        POSTER_SYSTEM.drawOverlay(ctx, {
+            experimentId:    '06',
+            seriesName:      'SURVEILLANCE',
+            verticalContent: 'RING · ' + writesCount,
+            topRight:        (phase === 'paused' ? 'PAUSED · ' : 'LIVE · ') + faceLabel,
+            bottomRight:     'GRID · ' + GRID_COLS + '×' + GRID_ROWS,
+            invert:          false,
+            hidden:          hidden,
+            fontSize: 13, labelH: 20, labelPadX: 10, edgePad: 16,
+            posterW: POSTER_W,
+            posterH: POSTER_H,
+        });
+    }
+
+    // ============================================================
+    // UI bindings
+    // ============================================================
+
+    btnPause.addEventListener('click', () => {
+        if (phase === 'running') {
+            phase = 'paused';
+            btnPause.textContent = 'Resume';
+        } else if (phase === 'paused') {
+            phase = 'running';
+            btnPause.textContent = 'Pause';
+        }
+        updateStatus();
+    });
+
+    btnClear.addEventListener('click', () => {
+        paintWhite();
+        lctx.clearRect(0, 0, POSTER_W, POSTER_H);
+        ringPointer = 0;
+        writesCount = 0;
+        for (let i = 0; i < TOTAL_SLOTS; i++) slotUpdated[i] = 0;
+        if (phase === 'running' || phase === 'paused') {
+            drawWaitingText();
+            updateStatus();
+        }
+    });
+
+    btnSave.addEventListener('click', saveFrame);
+
+    function saveFrame() {
+        // Compose output + cell-frame highlights + POSTER_SYSTEM tags
+        // into one PNG. Tags are forced visible for the export so every
+        // saved frame carries its identity labels — per CLAUDE.md.
+        const compo = document.createElement('canvas');
+        compo.width  = POSTER_W;
+        compo.height = POSTER_H;
+        const cctx = compo.getContext('2d');
+        cctx.drawImage(output, 0, 0);
+        cctx.drawImage(overlay, 0, 0); // current cell-frame fades
+        drawPosterOverlay(cctx, false); // always-on tags for the export
+        const link = document.createElement('a');
+        link.download = 'surveillance-' + Date.now() + '.png';
+        link.href = compo.toDataURL('image/png');
+        link.click();
+    }
+
+    document.addEventListener('keydown', (e) => {
+        const a = document.activeElement;
+        if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) return;
+        if (e.key === 'h' || e.key === 'H') {
+            overlayHidden = !overlayHidden;
+            e.preventDefault();
+        } else if (e.key === 's' || e.key === 'S') {
+            saveFrame();
+            e.preventDefault();
+        }
+    });
+
+    // ============================================================
+    // Boot
+    // ============================================================
+
+    (async function boot() {
+        setStatus('Loading FaceMesh…', 'loading');
+        try {
+            initFaceMesh();
+        } catch (e) {
+            console.error(e);
+            setStatus('FaceMesh failed to init', 'error');
+            phase = 'error';
+            return;
+        }
+
+        setStatus('Requesting camera…', 'loading');
+        try {
+            await initCamera();
+        } catch (e) {
+            console.error(e);
+            setStatus('Camera denied or unavailable', 'error');
+            phase = 'error';
+            btnPause.disabled = true;
+            btnClear.disabled = true;
+            btnSave.disabled  = true;
+            return;
+        }
+
+        phase = 'running';
+        tickTimer = setInterval(tick, TICK_MS);
+        requestAnimationFrame(drawHighlights);
+        setStatus('LIVE · no face · 0 writes', 'live');
+    })();
+    </script>
+
+</body>
+</html>
