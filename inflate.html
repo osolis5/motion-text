@@ -14,6 +14,9 @@
   <!-- Shared poster overlay -->
   <script src="poster-system.js"></script>
 
+  <!-- jsPDF for high-res PDF export (Letter @ 600 DPI, Risograph-ready) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
   <!-- Shared projection-mapping helper. Inflate uses `#stage` as its
        fixed-aspect container (not `#sketch` like the rest of the
        series) because #stage hosts its own scale-to-fit transform.
@@ -369,6 +372,74 @@
       z-index: 10;
     }
     .back:hover { color: rgba(255, 255, 255, 0.6); }
+
+    /* ── Right-side Risograph export panel ───────────── */
+    .riso-panel {
+      position: fixed;
+      top: 50%;
+      right: 24px;
+      transform: translateY(-50%);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      font-family: 'IBM Plex Mono', monospace;
+      color: rgba(255, 255, 255, 0.75);
+      z-index: 10;
+      background: rgba(0, 0, 0, 0.32);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      padding: 16px 14px;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      min-width: 168px;
+    }
+    .riso-title {
+      font-size: 10px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.95);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+      padding-bottom: 10px;
+    }
+    .riso-group {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .riso-label {
+      font-size: 9px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.55);
+      flex: 1;
+    }
+    .riso-panel .seg button {
+      padding: 6px 10px;
+      font-size: 9px;
+      letter-spacing: 1.5px;
+      min-width: 26px;
+    }
+    .riso-export {
+      margin-top: 2px;
+      padding: 10px 12px;
+      background: rgba(255, 255, 255, 0.92);
+      color: #0d0c10;
+      border: 1px solid rgba(255, 255, 255, 0.92);
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 2.5px;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: background 0.18s, color 0.18s;
+    }
+    .riso-export:hover { background: #fff; color: #000; }
+    .riso-export:active { transform: translateY(1px); }
+    .riso-export.busy {
+      background: rgba(255, 255, 255, 0.18);
+      color: rgba(255, 255, 255, 0.85);
+      border-color: rgba(255, 255, 255, 0.18);
+      cursor: wait;
+    }
   </style>
 </head>
 <body>
@@ -434,8 +505,38 @@
     <span class="sep">·</span>
     <b>C</b> Calibrate
     <span class="sep">·</span>
-    <b>S</b> Save
+    <b>S</b> Save PDF
   </div>
+
+  <aside class="riso-panel" aria-label="Risograph export">
+    <div class="riso-title">Risograph</div>
+
+    <div class="riso-group">
+      <span class="riso-label">Dither</span>
+      <div class="seg riso-seg" data-effect="dither">
+        <button data-colors="1">1</button>
+        <button data-colors="2">2</button>
+      </div>
+    </div>
+
+    <div class="riso-group">
+      <span class="riso-label">Duotone</span>
+      <div class="seg riso-seg" data-effect="duotone">
+        <button data-colors="1">1</button>
+        <button data-colors="2">2</button>
+      </div>
+    </div>
+
+    <div class="riso-group">
+      <span class="riso-label">Halftone</span>
+      <div class="seg riso-seg" data-effect="halftone">
+        <button data-colors="1">1</button>
+        <button data-colors="2">2</button>
+      </div>
+    </div>
+
+    <button class="riso-export" id="riso-export" type="button">Export · As is</button>
+  </aside>
 
   <script type="module">
   // =====================================================
@@ -468,6 +569,58 @@
 
   const POSTER_W = 720;
   const POSTER_H = 1000;
+
+  // Print export — US Letter at 600 DPI for Risograph-ready PDFs.
+  // 8.5 × 11 in × 600 dpi = 5100 × 6600 px. The renderer is temporarily
+  // resized to these dimensions during savePoster(); the live preview
+  // canvas keeps its 720 × 1000 backing buffer.
+  const PRINT_DPI = 600;
+  const PRINT_W = Math.round(8.5 * PRINT_DPI);
+  const PRINT_H = Math.round(11 * PRINT_DPI);
+
+  // Export treatments — picked from the right-side Risograph panel.
+  // `effect` is the screening method, `colors` is 1 (K plate only) or
+  // 2 (K + spot plate). `as-is` skips treatment and exports full color.
+  //   as-is          — full RGB (web-style preview)
+  //   dither/1       — 1-bit Bayer ordered dither, black ink
+  //   dither/2       — Bayer dither separated to K + fluorescent pink
+  //   duotone/1      — continuous-tone luminance, black drum only
+  //   duotone/2      — continuous-tone K + fluorescent pink (3-page sep)
+  //   halftone/1     — clustered-dot screen, black ink
+  //   halftone/2     — clustered-dot screen separated to K + spot
+  let exportEffect = 'as-is';
+  let exportColors = 0;
+
+  // Spot ink for any 2-color export. Riso fluorescent pink is the most
+  // common second drum and reads well against black on cream paper.
+  const SPOT_INK = { rgb: [255, 70, 160], name: 'FLUORESCENT PINK' };
+
+  // Bayer 4×4 ordered dither matrix, normalized to 0..255 thresholds.
+  const BAYER_4 = (() => {
+    const m = [
+      [ 0,  8,  2, 10],
+      [12,  4, 14,  6],
+      [ 3, 11,  1,  9],
+      [15,  7, 13,  5],
+    ];
+    return m.map(r => r.map(v => Math.round((v + 0.5) / 16 * 255)));
+  })();
+
+  // 8×8 clustered-dot halftone matrix — produces the round-dot screen
+  // characteristic of Riso prints. Values 0..63 normalized to 0..255.
+  const HALFTONE_8 = (() => {
+    const m = [
+      [24, 10, 12, 26, 35, 47, 49, 37],
+      [ 8,  0,  2, 14, 45, 59, 61, 51],
+      [22,  6,  4, 16, 43, 57, 63, 53],
+      [30, 20, 18, 28, 33, 41, 55, 39],
+      [34, 46, 48, 36, 25, 11, 13, 27],
+      [44, 58, 60, 50,  9,  1,  3, 15],
+      [42, 56, 62, 52, 23,  7,  5, 17],
+      [32, 40, 54, 38, 31, 21, 19, 29],
+    ];
+    return m.map(r => r.map(v => Math.round((v + 0.5) / 64 * 255)));
+  })();
 
   // ── DOM refs ────────────────────────────────────
   const stage = document.getElementById('stage');
@@ -1640,6 +1793,28 @@
 
     // Track mode toggle (GAZE / HEAD) — switches what the eye tracker
     // (or mouse fallback) actually does to the text.
+    // Risograph export panel — each effect/colors button triggers an
+    // export with that treatment. The "Export As Is" button below
+    // sends the full-color composite. Clicking marks the chosen
+    // segment active and disables all controls until the PDF lands.
+    const risoPanel = document.querySelector('.riso-panel');
+    if (risoPanel) {
+      risoPanel.addEventListener('click', async (e) => {
+        const btn = e.target.closest('button');
+        if (!btn) return;
+        const seg = btn.closest('.riso-seg');
+        if (seg) {
+          const effect = seg.dataset.effect;
+          const colors = parseInt(btn.dataset.colors, 10);
+          markRisoActive(effect, colors);
+          await runExport(effect, colors);
+        } else if (btn.id === 'riso-export') {
+          markRisoActive('as-is', 0);
+          await runExport('as-is', 0);
+        }
+      });
+    }
+
     const trackToggle = document.getElementById('track-toggle');
     trackToggle.addEventListener('click', (e) => {
       const btn = e.target.closest('button');
@@ -1795,40 +1970,287 @@
   let mouseGaze = false;
 
   // ---------------------------------------------------------------
-  // 9. Save — composite GL + overlay into a single PNG
+  // 9. Save — composite GL + overlay into a Letter-size PDF at 600 DPI.
+  //    The renderer is temporarily resized to PRINT_W × PRINT_H so the
+  //    Three.js scene re-renders natively at print resolution (no upscale).
+  //    Color modes — bw / grayscale / duotone — are applied per-pixel after
+  //    the composite is built. Duotone outputs three pages: a tinted
+  //    preview, a black plate, and a spot-color plate (each grayscale,
+  //    where black = full ink coverage on the printer).
   // ---------------------------------------------------------------
-  function savePoster() {
+  // Mark which Risograph panel button was last picked. Visual feedback
+  // only — clicking always exports immediately, but seeing the active
+  // segment confirms what was applied.
+  function markRisoActive(effect, colors) {
+    exportEffect = effect;
+    exportColors = colors;
+    document.querySelectorAll('.riso-seg button').forEach(b => {
+      const seg = b.closest('.riso-seg');
+      const match = seg && seg.dataset.effect === effect &&
+        parseInt(b.dataset.colors, 10) === colors;
+      b.classList.toggle('active', !!match);
+    });
+  }
+
+  // Trigger an export with the chosen treatment, locking the panel
+  // and showing a busy state on the Export button so the user gets
+  // feedback during the multi-second PDF encoding.
+  async function runExport(effect, colors) {
+    const exportBtn = document.getElementById('riso-export');
+    const segBtns = document.querySelectorAll('.riso-seg button');
+    const prev = exportBtn ? exportBtn.textContent : '';
+    if (exportBtn) {
+      exportBtn.classList.add('busy');
+      exportBtn.textContent = 'Exporting…';
+      exportBtn.disabled = true;
+    }
+    segBtns.forEach(b => { b.disabled = true; });
+    try {
+      await savePoster(effect, colors);
+    } finally {
+      if (exportBtn) {
+        exportBtn.classList.remove('busy');
+        exportBtn.textContent = prev || 'Export · As is';
+        exportBtn.disabled = false;
+      }
+      segBtns.forEach(b => { b.disabled = false; });
+    }
+  }
+
+  async function savePoster(effect, colors) {
+    effect = effect || exportEffect;
+    colors = (colors == null) ? exportColors : colors;
+    const tag = effect === 'as-is' ? 'AS-IS' : effect.toUpperCase() + '-' + colors + 'C';
+    // Status badge — encoding 5100x6600 plates can take 5-25s, so show
+    // the user something is happening. The badge sits above the HUD bar.
+    const badge = document.getElementById('save-badge');
+    if (badge) {
+      badge.textContent = 'EXPORTING ' + tag + ' PDF…';
+      badge.style.display = 'block';
+    }
+    // Yield once so the badge paints before the synchronous render pass.
+    await new Promise((r) => requestAnimationFrame(r));
+
+    // Stash live render state so we can restore it after the print pass.
+    const livePR = renderer.getPixelRatio();
+    const liveSize = new THREE.Vector2();
+    renderer.getSize(liveSize);
+    const liveAspect = camera.aspect;
+
+    // Render the scene at print resolution. setSize(_, _, false) leaves
+    // the canvas CSS untouched so the live page layout doesn't reflow.
+    renderer.setPixelRatio(1);
+    renderer.setSize(PRINT_W, PRINT_H, false);
+    camera.aspect = PRINT_W / PRINT_H;
+    camera.updateProjectionMatrix();
     renderer.render(scene, camera);
+
+    // High-res composite — paper, shadow, GL render, overlay.
     const composite = document.createElement('canvas');
-    composite.width = POSTER_W;
-    composite.height = POSTER_H;
+    composite.width = PRINT_W;
+    composite.height = PRINT_H;
     const cctx = composite.getContext('2d');
     cctx.fillStyle = invert ? '#0d0c10' : '#f1eee8';
-    cctx.fillRect(0, 0, POSTER_W, POSTER_H);
-    // Soft floor shadow to match the live stage
+    cctx.fillRect(0, 0, PRINT_W, PRINT_H);
     const sh = cctx.createRadialGradient(
-      POSTER_W / 2, POSTER_H * 0.6, 0,
-      POSTER_W / 2, POSTER_H * 0.6, POSTER_W * 0.45
+      PRINT_W / 2, PRINT_H * 0.6, 0,
+      PRINT_W / 2, PRINT_H * 0.6, PRINT_W * 0.45
     );
     sh.addColorStop(0, 'rgba(0,0,0,0.28)');
     sh.addColorStop(0.4, 'rgba(0,0,0,0.14)');
     sh.addColorStop(0.75, 'rgba(0,0,0,0)');
     cctx.fillStyle = sh;
-    cctx.fillRect(0, POSTER_H * 0.4, POSTER_W, POSTER_H * 0.4);
+    cctx.fillRect(0, PRINT_H * 0.4, PRINT_W, PRINT_H * 0.4);
+    cctx.drawImage(glCanvas, 0, 0, PRINT_W, PRINT_H);
 
-    cctx.drawImage(glCanvas, 0, 0, POSTER_W, POSTER_H);
-    const prevHidden = overlayHidden;
-    overlayHidden = false;
-    drawOverlay();
-    cctx.drawImage(overlayCanvas, 0, 0);
-    overlayHidden = prevHidden;
-    composite.toBlob((blob) => {
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'inflate-' + currentText + '-' + mode + '-' + Date.now() + '.png';
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    }, 'image/png');
+    // Overlay rendered at print scale — labels stay legible at 600 DPI
+    // by scaling fontSize / labelH / pad by the print:screen ratio.
+    const SCALE = PRINT_W / POSTER_W;
+    const overlayHi = document.createElement('canvas');
+    overlayHi.width = PRINT_W;
+    overlayHi.height = PRINT_H;
+    const overlayHiCtx = overlayHi.getContext('2d');
+    const labelTrack = trackMode.toUpperCase();
+    const source = eyeEnabled
+      ? (gazeActive ? 'EYE' : 'LOST')
+      : (mouseGaze ? 'MOUSE' : 'OFF');
+    const eyeStr = labelTrack + ' · ' + source;
+    POSTER_SYSTEM.drawOverlay(overlayHiCtx, {
+      experimentId: '07',
+      seriesName: 'INFLATE',
+      verticalContent: mode.toUpperCase(),
+      topRight: eyeStr,
+      bottomRight: 'WORD · ' + currentText,
+      invert: !invert,
+      hidden: false, // overlay is always rendered into print exports
+      fontSize: Math.round(13 * SCALE),
+      labelH: Math.round(20 * SCALE),
+      labelPadX: Math.round(10 * SCALE),
+      edgePad: Math.round(16 * SCALE),
+      posterW: PRINT_W,
+      posterH: PRINT_H,
+    });
+    cctx.drawImage(overlayHi, 0, 0);
+
+    // Restore live render state immediately so the page resumes animating
+    // at native res while the (potentially slow) PDF encoding runs.
+    renderer.setPixelRatio(livePR);
+    renderer.setSize(liveSize.x, liveSize.y, false);
+    camera.aspect = liveAspect;
+    camera.updateProjectionMatrix();
+    renderer.render(scene, camera);
+
+    // Translate the composite into one or more pages per the chosen
+    // effect (as-is / dither / duotone / halftone) and color count.
+    const pages = applyTreatment(composite, effect, colors);
+    const slug = effect === 'as-is' ? 'asis' : effect + '-' + colors + 'c';
+    const filename =
+      'inflate-' + currentText + '-' + mode + '-' + slug + '-' + Date.now() + '.pdf';
+    writePDF(pages, filename);
+    if (badge) badge.style.display = 'none';
+  }
+
+  // Per-pixel image processing for the Riso treatments. Returns a list
+  // of pages — one for single-ink modes, three (preview + K + spot
+  // plate) for any 2-color separation. The screening method is picked
+  // by `effect`; `colors` toggles single-ink vs. K + spot output.
+  function applyTreatment(srcCanvas, effect, colors) {
+    const w = srcCanvas.width;
+    const h = srcCanvas.height;
+    if (effect === 'as-is') {
+      return [{ canvas: srcCanvas, label: 'COLOR' }];
+    }
+
+    const sctx = srcCanvas.getContext('2d');
+    const src = sctx.getImageData(0, 0, w, h);
+    const data = src.data;
+
+    const sr = SPOT_INK.rgb[0] / 255;
+    const sg = SPOT_INK.rgb[1] / 255;
+    const sb = SPOT_INK.rgb[2] / 255;
+
+    // `screen(d, x, y)` returns 0..1 ink coverage for a target density d
+    // [0..1] at pixel (x, y). The screening method depends on `effect`:
+    //   duotone → continuous tone (no screening, density passes through)
+    //   dither  → Bayer ordered dither, bi-level output
+    //   halftone → clustered-dot screen, bi-level dotted output
+    let screen;
+    if (effect === 'duotone') {
+      screen = (d) => d;
+    } else if (effect === 'dither') {
+      screen = (d, x, y) => {
+        const t = BAYER_4[y & 3][x & 3];
+        return d * 255 > t ? 1 : 0;
+      };
+    } else { // halftone
+      screen = (d, x, y) => {
+        const t = HALFTONE_8[y & 7][x & 7];
+        return d * 255 > t ? 1 : 0;
+      };
+    }
+
+    if (colors === 1) {
+      // Single black drum — luminance drives ink density on paper.
+      const out = document.createElement('canvas');
+      out.width = w; out.height = h;
+      const octx = out.getContext('2d');
+      const dst = octx.createImageData(w, h);
+      const d = dst.data;
+      let i = 0;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const L = (0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]) / 255;
+          const inkK = Math.pow(1 - L, 1.4);
+          const cov = screen(inkK, x, y);
+          // Plate convention: 0 = full ink, 255 = no ink.
+          const v = Math.round(255 * (1 - cov));
+          d[i] = v; d[i + 1] = v; d[i + 2] = v; d[i + 3] = 255;
+          i += 4;
+        }
+      }
+      octx.putImageData(dst, 0, 0);
+      const label = effect.toUpperCase() + ' · BLACK';
+      return [{ canvas: out, label: 'PLATE 1 / ' + label }];
+    }
+
+    // Two-ink separation — K (black) + spot (fluorescent pink).
+    // Scene luminance drives both plates with complementary curves:
+    //   inkK = (1-L)^1.4  → black is heaviest in shadows
+    //   inkS = L^0.7      → spot is heaviest in highlights/midtones
+    const previewC = document.createElement('canvas');
+    const plateK = document.createElement('canvas');
+    const plateS = document.createElement('canvas');
+    previewC.width = plateK.width = plateS.width = w;
+    previewC.height = plateK.height = plateS.height = h;
+    const previewD = previewC.getContext('2d').createImageData(w, h);
+    const plateKD = plateK.getContext('2d').createImageData(w, h);
+    const plateSD = plateS.getContext('2d').createImageData(w, h);
+
+    let i = 0;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const L = (0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]) / 255;
+        const inkK = Math.pow(1 - L, 1.4);
+        const inkS = Math.pow(L, 0.7);
+        const covK = screen(inkK, x, y);
+        const covS = screen(inkS, x, y);
+
+        // Preview — paper white, K ink darkens, spot ink tints toward
+        // its color. Reads close to the actual print pull.
+        let r = 1 - covK, g = 1 - covK, b = 1 - covK;
+        r = r * (1 - covS) + r * sr * covS;
+        g = g * (1 - covS) + g * sg * covS;
+        b = b * (1 - covS) + b * sb * covS;
+        previewD.data[i]     = Math.round(r * 255);
+        previewD.data[i + 1] = Math.round(g * 255);
+        previewD.data[i + 2] = Math.round(b * 255);
+        previewD.data[i + 3] = 255;
+
+        // Per-drum plate files (0 = full ink, 255 = no ink).
+        const kVal = Math.round(255 * (1 - covK));
+        const sVal = Math.round(255 * (1 - covS));
+        plateKD.data[i]     = kVal; plateKD.data[i + 1] = kVal; plateKD.data[i + 2] = kVal; plateKD.data[i + 3] = 255;
+        plateSD.data[i]     = sVal; plateSD.data[i + 1] = sVal; plateSD.data[i + 2] = sVal; plateSD.data[i + 3] = 255;
+        i += 4;
+      }
+    }
+    previewC.getContext('2d').putImageData(previewD, 0, 0);
+    plateK.getContext('2d').putImageData(plateKD, 0, 0);
+    plateS.getContext('2d').putImageData(plateSD, 0, 0);
+
+    const eff = effect.toUpperCase();
+    return [
+      { canvas: previewC, label: 'PREVIEW · ' + eff + ' · BLACK + ' + SPOT_INK.name },
+      { canvas: plateK,   label: 'PLATE 1 / BLACK · ' + eff },
+      { canvas: plateS,   label: 'PLATE 2 / ' + SPOT_INK.name + ' · ' + eff },
+    ];
+  }
+
+  // Wrap the page canvases in a Letter-size PDF. Page is 612 × 792 pt
+  // (8.5 × 11 in × 72 pt/in). Each canvas is 5100 × 6600 px so when
+  // scaled to fill the page it lands at exactly 600 DPI on print.
+  function writePDF(pages, filename) {
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
+    for (let i = 0; i < pages.length; i++) {
+      if (i > 0) pdf.addPage();
+      // JPEG quality 0.95 — keeps file size reasonable (~3-8 MB) while
+      // preserving fine matcap gradients. Use PNG for plates so the
+      // grayscale ramp doesn't pick up JPEG ringing along ink edges.
+      const isPlate = pages[i].label.startsWith('PLATE');
+      const fmt = isPlate ? 'PNG' : 'JPEG';
+      const dataUrl = pages[i].canvas.toDataURL(
+        isPlate ? 'image/png' : 'image/jpeg',
+        0.95
+      );
+      pdf.addImage(dataUrl, fmt, 0, 0, 612, 792, undefined, 'FAST');
+      if (pages.length > 1) {
+        pdf.setFontSize(7);
+        pdf.setTextColor(120);
+        pdf.text(pages[i].label + '   ·   ' + (i + 1) + '/' + pages.length, 18, 786);
+      }
+    }
+    pdf.save(filename);
   }
 
   // ---------------------------------------------------------------
